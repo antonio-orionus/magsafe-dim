@@ -13,6 +13,10 @@
   </picture>
 </p>
 
+MagSafe Dim is a free, open-source macOS app that turns off the charging LED on a
+MacBook's MagSafe 3 connector and turns it off again after every plug-in and wake.
+One switch: no menu bar icon, no charge limit, nothing else to set up.
+
 ## Install
 
 Download [MagSafe-Dim.dmg](https://github.com/antonio-orionus/magsafe-dim/releases/latest/download/MagSafe-Dim.dmg),
