@@ -1,0 +1,23 @@
+[package]
+name = "magsafe-dim"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Keeps the LED on a MacBook's MagSafe 3 connector off"
+license = "MIT"
+repository = "https://github.com/antonio-orionus/magsafe-dim"
+keywords = ["macos", "magsafe", "led", "smc", "macbook"]
+categories = ["command-line-utilities", "os::macos-apis"]
+readme = "README.md"
+publish = false
+
+[dependencies]
+libc = "0.2.180"
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFDate", "CFDictionary", "CFRunLoop"] }
+objc2-io-kit = { version = "0.3.2", default-features = false, features = ["std", "libc", "ps", "pwr_mgt"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

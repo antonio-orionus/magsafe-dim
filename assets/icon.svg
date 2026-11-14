@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4f5f7"/>
+      <stop offset="1" stop-color="#c9ced6"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f2f3f5"/>
+      <stop offset="0.6" stop-color="#b8bcc3"/>
+      <stop offset="1" stop-color="#8d929a"/>
+    </linearGradient>
+    <linearGradient id="plug" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34363b"/>
+      <stop offset="0.5" stop-color="#1c1d21"/>
+      <stop offset="1" stop-color="#0f1012"/>
+    </linearGradient>
+    <linearGradient id="plugSheen" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="cableShade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="0.35" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="0.65" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.55"/>
+    </linearGradient>
+    <linearGradient id="collar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0c0d0f"/>
+      <stop offset="0.5" stop-color="#2a2c31"/>
+      <stop offset="1" stop-color="#0c0d0f"/>
+    </linearGradient>
+    <pattern id="braid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <rect width="36" height="36" fill="#1b1c20"/>
+      <path d="M0 0 L36 36 M-18 18 L18 54 M18 -18 L54 18" stroke="#3a3c43" stroke-width="7"/>
+      <path d="M36 0 L0 36 M54 18 L18 54 M18 -18 L-18 18" stroke="#2a2c31" stroke-width="7"/>
+    </pattern>
+    <radialGradient id="ledOn" cx="0.45" cy="0.4" r="0.6">
+      <stop offset="0" stop-color="#d9ffd0"/>
+      <stop offset="0.45" stop-color="#5fe34f"/>
+      <stop offset="1" stop-color="#22a52a"/>
+    </radialGradient>
+    <radialGradient id="ledGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#5fe34f" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#5fe34f" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="body">
+      <rect x="100" y="100" width="824" height="824" rx="185"/>
+    </clipPath>
+  </defs>
+
+  <!-- macOS icon body: 824 x 824 on the 1024 grid -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="#000000" stroke-opacity="0.12" stroke-width="3"/>
+
+  <g clip-path="url(#body)">
+  <!-- the plug, scaled up around its centre to fill the icon -->
+  <g transform="translate(512 448) scale(1.22) translate(-512 -448)">
+    <!-- braided cable -->
+    <rect x="452" y="600" width="120" height="340" fill="url(#braid)"/>
+    <rect x="452" y="600" width="120" height="340" fill="url(#cableShade)"/>
+    <!-- strain relief collar -->
+    <rect x="440" y="592" width="144" height="58" rx="14" fill="url(#collar)"/>
+
+    <!-- metal connector strip -->
+    <rect x="322" y="286" width="380" height="70" rx="14" fill="url(#metal)"/>
+    <rect x="322" y="286" width="380" height="12" rx="6" fill="#ffffff" fill-opacity="0.6"/>
+
+    <!-- plug body -->
+    <rect x="282" y="334" width="460" height="276" rx="64" fill="url(#plug)"/>
+    <rect x="282" y="334" width="460" height="276" rx="64" fill="url(#plugSheen)"/>
+    <rect x="284" y="336" width="456" height="272" rx="62" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="3"/>
+
+    <!-- LED, lit green, with a soft glow -->
+    <circle cx="512" cy="472" r="60" fill="url(#ledGlow)"/>
+    <circle cx="512" cy="472" r="19" fill="url(#ledOn)"/>
+  </g>
+  </g>
+</svg>
