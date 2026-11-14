@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="760" viewBox="0 0 660 760">
+  <!-- Background of the MagSafe Dim disk image window. The window shows the top
+       660 x 400 points: the app icon at (170, 150), the Applications link at
+       (490, 150), the layout clear of a Finder path bar at the bottom. Below that the
+       ground just continues: people who show hidden files can scroll down to the
+       volume's hidden files, parked at y = 600, and see this instead of white. -->
+  <defs>
+    <linearGradient id="bg" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="400">
+      <stop offset="0" stop-color="#f7f8fa"/>
+      <stop offset="1" stop-color="#e4e7ec"/>
+    </linearGradient>
+  </defs>
+  <rect width="660" height="760" fill="url(#bg)"/>
+
+  <!-- arrow from the app to Applications -->
+  <path d="M262 150 H388" fill="none" stroke="#a3a9b3" stroke-width="7" stroke-linecap="round"/>
+  <path d="M374 130 L398 150 L374 170" fill="none" stroke="#a3a9b3" stroke-width="7"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <text x="330" y="282" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="15" fill="#6b7280">Drag MagSafe Dim to Applications</text>
+</svg>

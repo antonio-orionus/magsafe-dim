@@ -4,9 +4,9 @@
 #   scripts/build-app.sh                       ad-hoc signature (works on this Mac only)
 #   SIGN_IDENTITY="Developer ID Application: Name (TEAMID)" scripts/build-app.sh
 #   SIGN_IDENTITY=... NOTARY_PROFILE=magsafe-dim scripts/build-app.sh
-#       also notarizes and staples it, and writes target/MagSafe-Dim.zip
-#       for download. NOTARY_PROFILE names credentials saved with
-#       `xcrun notarytool store-credentials`.
+#       also notarizes and staples the app, then builds, signs, notarizes and
+#       staples target/MagSafe-Dim.dmg for download (needs uv for dmgbuild).
+#       NOTARY_PROFILE names credentials saved with `xcrun notarytool store-credentials`.
 #   OUT_DIR=target/dev scripts/build-app.sh    put the app somewhere else (default: target;
 #                                              relative to the repository root)
 #
@@ -59,27 +59,46 @@ echo "built $app $version (signed: ${team:-ad-hoc})"
 [ -n "${NOTARY_PROFILE:-}" ] || exit 0
 [ -n "$team" ] || { echo "notarization needs a Developer ID signature (SIGN_IDENTITY)" >&2; exit 1; }
 
-# Apple checks the app and issues a ticket; stapling attaches it, so Gatekeeper
-# accepts a downloaded copy even offline.
+# Sends a file to Apple's notary service and waits for the verdict. Apple's
+# service sometimes reports "offline" on a working connection, so try three times.
+notarize() {
+  for attempt in 1 2 3; do
+    xcrun notarytool submit "$1" --keychain-profile "$NOTARY_PROFILE" --wait --output-format json \
+      > "$out/notarize.json" 2>/dev/null || true
+    status="$(plutil -extract status raw "$out/notarize.json" 2>/dev/null || echo "not submitted")"
+    [ "$status" = "Accepted" ] && return 0
+    # Apple looked at it and said no: retrying won't help. Show why.
+    if id="$(plutil -extract id raw "$out/notarize.json" 2>/dev/null)"; then
+      echo "notarization of $1: $status" >&2
+      xcrun notarytool log "$id" --keychain-profile "$NOTARY_PROFILE" >&2 || true
+      return 1
+    fi
+    echo "notarization attempt $attempt: not submitted; retrying in 10 s" >&2
+    sleep 10
+  done
+  return 1
+}
+
+# 1. The app: Apple checks it and issues a ticket; stapling attaches the ticket, so
+#    Gatekeeper accepts a copy even offline. Zipped without extended attributes:
+#    their ._ files break the signature when unpacked by other tools.
 zip="$out/MagSafe-Dim.zip"
 rm -f "$zip"
 ditto -c -k --norsrc --noextattr --keepParent "$app" "$zip"
-# Keep going on failure, so Apple's explanation gets printed below.
-xcrun notarytool submit "$zip" --keychain-profile "$NOTARY_PROFILE" --wait --output-format json \
-  > "$out/notarize.json" || true
-status="$(plutil -extract status raw "$out/notarize.json" 2>/dev/null || echo "not submitted")"
-if [ "$status" != "Accepted" ]; then
-  echo "notarization: $status" >&2
-  if id="$(plutil -extract id raw "$out/notarize.json" 2>/dev/null)"; then
-    xcrun notarytool log "$id" --keychain-profile "$NOTARY_PROFILE" >&2 || true
-  else
-    cat "$out/notarize.json" >&2
-  fi
-  exit 1
-fi
+notarize "$zip"
 xcrun stapler staple "$app"
-xcrun stapler validate "$app"
 rm -f "$zip"
 ditto -c -k --norsrc --noextattr --keepParent "$app" "$zip"
 spctl --assess --type exec --verbose=2 "$app"
-echo "notarized and stapled; download: $zip"
+
+# 2. The download: a disk image with the stapled app and a link to Applications,
+#    laid out by dmgbuild (scripts/dmg-settings.py), then signed, notarized, stapled.
+dmg="$out/MagSafe-Dim.dmg"
+rm -f "$dmg"
+uvx --from 'dmgbuild==1.6.7' dmgbuild -s scripts/dmg-settings.py \
+  -D app="$app" -D background=assets/dmg-background.tiff "MagSafe Dim" "$dmg"
+codesign --force --sign "$identity" --timestamp "$dmg"
+notarize "$dmg"
+xcrun stapler staple "$dmg"
+spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+echo "notarized and stapled; download: $dmg"

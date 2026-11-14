@@ -2,7 +2,7 @@
   <img src="assets/icon.png" width="160" alt="MagSafe Dim icon: a black MagSafe 3 plug with a green LED">
   <h1>MagSafe Dim</h1>
   <p>Keeps your MagSafe charging light off.<br><br>
-  <a href="https://github.com/antonio-orionus/magsafe-dim/releases/latest/download/MagSafe-Dim.zip"><b>Download for macOS</b></a><br>
+  <a href="https://github.com/antonio-orionus/magsafe-dim/releases/latest/download/MagSafe-Dim.dmg"><b>Download for macOS</b></a><br>
   <sub>MacBooks with MagSafe 3 · macOS 13 or later</sub></p>
 </div>
 
@@ -15,8 +15,8 @@
 
 ## Install
 
-Download [MagSafe-Dim.zip](https://github.com/antonio-orionus/magsafe-dim/releases/latest/download/MagSafe-Dim.zip)
-and open the app; it offers to move itself to your Applications folder. Turn on
+Download [MagSafe-Dim.dmg](https://github.com/antonio-orionus/magsafe-dim/releases/latest/download/MagSafe-Dim.dmg),
+open it and drag MagSafe Dim to Applications, then open it from there. Turn on
 **Keep the light off**, and allow it once when macOS asks: click its notification, or
 turn on MagSafe Dim in System Settings › General › Login Items, then enter an
 administrator password.
@@ -54,8 +54,9 @@ open "target/MagSafe Dim.app"      # it offers to move itself to Applications
 `scripts/build-app.sh` signs the app ad-hoc, which is enough on your own Mac. With a
 Developer ID, set `SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"`, so
 Login Items lists it under your name. Add `NOTARY_PROFILE=<profile>`, a profile saved with
-`xcrun notarytool store-credentials`, to notarize and staple it and write
-`target/MagSafe-Dim.zip` for download. `OUT_DIR=target/dev` puts the app elsewhere. Run it
+`xcrun notarytool store-credentials`, to notarize and staple the app, then build, sign,
+notarize and staple `target/MagSafe-Dim.dmg` for download (with
+[dmgbuild](https://github.com/dmgbuild/dmgbuild), run through `uvx`). `OUT_DIR=target/dev` puts the app elsewhere. Run it
 as yourself, not with `sudo`, so `codesign` can use the key in your login keychain.
 
 ### How the app is put together
@@ -173,8 +174,10 @@ scripts/build-app.sh      # the whole app, ad-hoc signed
 install and no running helper. To test the first-run approval, use a fresh macOS VM:
 macOS remembers approvals, so a Mac that has allowed MagSafe Dim before won't ask again.
 
-The icon is drawn in [`assets/icon.svg`](assets/icon.svg). After editing it, run
-`assets/build-icon.sh`, which renders `AppIcon.icns` and `icon.png` with macOS's own
-SVG support, and commit all three.
+The icon is drawn in [`assets/icon.svg`](assets/icon.svg) and the disk image window's
+background in [`assets/dmg-background.svg`](assets/dmg-background.svg); its layout is in
+[`scripts/dmg-settings.py`](scripts/dmg-settings.py). After editing an SVG, run
+`assets/build-icon.sh`, which renders `AppIcon.icns`, `icon.png` and
+`dmg-background.tiff` with macOS's own SVG support, and commit the SVG with its output.
 
 </details>
