@@ -83,18 +83,70 @@ pub enum Write {
 
 pub const OFF: u8 = Write::Off as u8;
 
-/// What a raw `ACLC` value shows.
-pub fn describe(v: u8) -> &'static str {
-    match v {
-        0x00 => "macOS decides",
-        0x01 => "off",
-        0x03 => "green",
-        0x04 => "amber",
-        0x05 => "amber, blinking a few times",
-        0x06 => "amber, blinking slowly",
-        0x07 => "amber, blinking fast",
-        _ => "unknown",
+/// The `ACLC` values whose meaning is known. Each has a name, the word the
+/// command line prints and accepts (and the app reads), and a description for
+/// people. The values come from batt and magled, which agree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Led {
+    /// macOS decides. Read back, the key then shows macOS's own choice instead.
+    System = 0x00,
+    Off = 0x01,
+    Green = 0x03,
+    Amber = 0x04,
+    BlinkOnce = 0x05,
+    BlinkSlow = 0x06,
+    BlinkFast = 0x07,
+}
+
+impl Led {
+    pub const ALL: [Led; 7] = [
+        Led::System,
+        Led::Off,
+        Led::Green,
+        Led::Amber,
+        Led::BlinkOnce,
+        Led::BlinkSlow,
+        Led::BlinkFast,
+    ];
+
+    pub fn from_value(v: u8) -> Option<Led> {
+        Led::ALL.into_iter().find(|led| *led as u8 == v)
     }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Led::System => "system",
+            Led::Off => "off",
+            Led::Green => "green",
+            Led::Amber => "amber",
+            Led::BlinkOnce => "blink-once",
+            Led::BlinkSlow => "blink-slow",
+            Led::BlinkFast => "blink-fast",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Led::System => "macOS decides",
+            Led::Off => "off",
+            Led::Green => "green",
+            Led::Amber => "amber",
+            Led::BlinkOnce => "amber, blinking a few times",
+            Led::BlinkSlow => "amber, blinking slowly",
+            Led::BlinkFast => "amber, blinking fast",
+        }
+    }
+}
+
+/// The name of a raw `ACLC` value, or "unknown".
+pub fn name(v: u8) -> &'static str {
+    Led::from_value(v).map_or("unknown", Led::name)
+}
+
+/// What a raw `ACLC` value shows, for people, or "unknown".
+pub fn describe(v: u8) -> &'static str {
+    Led::from_value(v).map_or("unknown", Led::description)
 }
 
 #[derive(Debug)]
@@ -257,6 +309,15 @@ mod tests {
     fn four_cc_is_big_endian() {
         assert_eq!(KEY, 0x41434C43);
         assert_eq!(KEY_TYPE, 0x75693820);
+    }
+
+    #[test]
+    fn names_and_values_round_trip() {
+        for led in Led::ALL {
+            assert_eq!(Led::from_value(led as u8), Some(led));
+        }
+        assert_eq!(Led::from_value(0x02), None);
+        assert_eq!(name(0x02), "unknown");
     }
 
     #[test]

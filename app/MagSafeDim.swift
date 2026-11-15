@@ -13,7 +13,8 @@ final class Model: ObservableObject {
     /// A new object on every use, so a status read never comes from a stale one.
     private var service: SMAppService { SMAppService.daemon(plistName: Self.plistName) }
     @Published private(set) var status: SMAppService.Status = .notRegistered
-    /// The LED as `magsafe-dim led` describes it: "off", "green", "amber", ...
+    /// The LED state's name as `magsafe-dim led` prints it (`Led` in src/smc.rs):
+    /// "off", "green", ..., or "unknown" or "unsupported".
     @Published private(set) var light = "unknown"
     /// The helper is on, but the light has stayed on for a while: it isn't working.
     @Published private(set) var stuck = false

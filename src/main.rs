@@ -23,11 +23,22 @@ magsafe-dim: keep the MagSafe 3 connector LED off
 Install and switch it on with the MagSafe Dim app. From a terminal:
 
   magsafe-dim status          show the LED and the daemon state
-  magsafe-dim led             print the LED state only (off, green, amber, ..., unsupported)
+  magsafe-dim led             print the LED state's name only (see below)
   sudo magsafe-dim run        keep the LED off in the foreground (Ctrl-C to stop)
   sudo magsafe-dim restore    give the LED back to macOS once
   magsafe-dim --version
+
+LED states:
 ";
+
+/// The usage text, ending with every LED state's name and description.
+fn usage() -> String {
+    let mut text = USAGE.to_string();
+    for led in smc::Led::ALL {
+        text += &format!("  {:<12} {}\n", led.name(), led.description());
+    }
+    text
+}
 
 fn need_root(cmd: &str) -> Result<(), String> {
     // SAFETY: geteuid has no preconditions.
@@ -78,11 +89,12 @@ fn status() -> Result<(), String> {
     Ok(())
 }
 
-/// For the app: the LED's state in a word, or "unsupported" on a Mac without a
-/// MagSafe 3 LED (no SMC, no ACLC key, or an ACLC key of another shape).
+/// For the app and scripts: the LED state's name (`smc::Led::name`), "unknown"
+/// for a value without one, or "unsupported" on a Mac without a MagSafe 3 LED
+/// (no SMC, no ACLC key, or an ACLC key of another shape).
 fn led() -> Result<(), String> {
     match smc::Smc::open().and_then(|smc| smc.read()) {
-        Ok(v) => println!("{}", smc::describe(v)),
+        Ok(v) => println!("{}", smc::name(v)),
         Err(smc::Error::NoSmc | smc::Error::NoKey | smc::Error::WrongKeyShape { .. }) => {
             println!("unsupported")
         }
@@ -116,11 +128,11 @@ fn main() -> ExitCode {
             Ok(())
         }
         ["--help" | "-h" | "help"] => {
-            print!("{USAGE}");
+            print!("{}", usage());
             Ok(())
         }
         _ => {
-            eprint!("{USAGE}");
+            eprint!("{}", usage());
             return ExitCode::from(2);
         }
     };
