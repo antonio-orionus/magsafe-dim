@@ -42,9 +42,12 @@ struct Preview {
             }
         }
         render(AboutView(icon: icon, version: "1.0.0"), "about")
+        render(AgentView(toolPath: "/Applications/MagSafe Dim.app/Contents/MacOS/magsafe-dim"), "agent")
         for (name, status, light, error) in states {
             render(ContentView(model: Model(preview: status, light: light, error: error), icon: icon), name)
         }
         render(ContentView(model: Model(preview: .enabled, light: "green", stuck: true), icon: icon), "stuck")
+        render(ContentView(model: Model(preview: .enabled, light: "green", target: "green"), icon: icon), "set")
+        render(ContentView(model: Model(preview: .enabled, light: "green", target: "system"), icon: icon), "system")
     }
 }

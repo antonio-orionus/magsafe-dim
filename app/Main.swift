@@ -13,22 +13,34 @@ struct MagSafeDimApp: App {
             ContentView(model: model)
         }
         .windowResizability(.contentSize)
-        .commands { AboutCommand() }
+        .commands { AppMenuCommands(model: model) }
 
         Window("About MagSafe Dim", id: "about") {
             AboutView()
         }
         .windowResizability(.contentSize)
+
+        Window("Use MagSafe Dim with AI", id: "agent") {
+            AgentView()
+        }
+        .windowResizability(.contentSize)
     }
 }
 
-/// MagSafe Dim > About MagSafe Dim opens our About window instead of the standard panel.
-struct AboutCommand: Commands {
+/// The app menu's first items: About MagSafe Dim opens our About window instead of
+/// the standard panel, and Use with AI… opens the agent prompt (on a Mac with the light,
+/// once the helper runs).
+struct AppMenuCommands: Commands {
+    @ObservedObject var model: Model
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
             Button("About MagSafe Dim") { openWindow(id: "about") }
+            if model.supported {
+                Button("Use with AI…") { openWindow(id: "agent") }
+                    .disabled(model.status != .enabled)
+            }
         }
     }
 }

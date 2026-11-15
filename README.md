@@ -9,7 +9,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/window-dark.png">
-    <img src="assets/screenshots/window-light.png" width="512" alt="The MagSafe Dim window with the switch 'Keep the light off' turned on">
+    <img src="assets/screenshots/window-light.png" width="512" alt="The MagSafe Dim window with the switches 'Allow light control' and 'Keep the light off' turned on">
   </picture>
 </p>
 
@@ -30,8 +30,9 @@ later) and MacBook Air (M2 and later).
 
 ## Uninstall
 
-Turn the switch off, then move the app to the Trash. (Trashing it while the switch is on
-also gives the light back within a few minutes, but leaves an entry in Login Items.)
+Turn **Allow light control** off, then move the app to the Trash. (Trashing it while it's
+on also gives the light back within a few minutes, but leaves an entry in
+Login Items.)
 
 ## Good to know
 
@@ -73,7 +74,7 @@ MagSafe Dim.app/Contents/
   Resources/AppIcon.icns
 ```
 
-The switch registers or unregisters the helper with Apple's `SMAppService`, which runs
+The **Allow light control** switch registers or unregisters the helper with Apple's `SMAppService`, which runs
 it from inside the app as a launchd daemon. The window shows the light by running
 `magsafe-dim led`, which reads it without root. From a terminal:
 
@@ -83,14 +84,43 @@ sudo "/Applications/MagSafe Dim.app/Contents/MacOS/magsafe-dim" run # foreground
 log show --last 1h --predicate 'process == "magsafe-dim"'
 ```
 
+### Other light states, for scripts
+
+While **Allow light control** is on, `magsafe-dim set` makes the helper keep another state
+instead of off, with no `sudo` (administrator accounts). **Use with AI** at the
+bottom of the app's window gives a prompt to paste into an AI agent that can run
+commands on your Mac, such as Claude Code or Codex. The agent reads
+`magsafe-dim --help`, suggests uses and sets up the ones you pick.
+
+```sh
+alias magsafe-dim="/Applications/MagSafe Dim.app/Contents/MacOS/magsafe-dim"  # scripts use the full path
+magsafe-dim set amber       # system, off, green, amber, blink, blink-once
+magsafe-dim target          # the state the helper keeps
+magsafe-dim led             # the state the light shows now
+```
+
+The helper sets it again after every plug-in and wake, as it does with off;
+`system` and `blink-once` are set once and then left alone. The choice lasts
+through restarts until the next `set`. In the app, **Keep the light off** switches
+between `off` and `system`, and turning **Allow light control** off ends any choice. Blinking amber is how a Mac reports a charging problem, so don't leave it on
+and forget it. The choice is one word in
+`/Library/Application Support/MagSafe Dim/led`: the folder belongs to root, the file
+can be changed by the admin group, and the helper accepts nothing but the names
+above.
+
 ### What it touches
 
 - **One SMC key, `ACLC`** (the LED), and nothing else. Before every read or write
   the helper checks that the key exists and is a one-byte `ui8 ` key, and refuses
   otherwise.
-- **Two values only:** `0x01` (off) while it runs, `0x00` (macOS decides) when it
-  stops. The write function takes an enum with just those two values, so nothing
-  else can reach the SMC.
+- **Known values only:** off while it runs (or the state chosen with
+  `magsafe-dim set`), `0x00` (macOS decides) when it stops. The write function
+  takes an enum of the states in [LED values](#led-values), so nothing else can
+  reach the SMC.
+- **One folder,** `/Library/Application Support/MagSafe Dim`, for the state chosen
+  with `magsafe-dim set`. The helper removes it when the app is deleted while light
+  control is allowed; after deleting the app with it off, remove it with
+  `sudo rm -r "/Library/Application Support/MagSafe Dim"`.
 - **Writes only on a mismatch.** Most events cost one read.
 - **Never delays sleep** and never keeps the Mac awake. It changes no charging
   behaviour, power setting or file.
@@ -113,7 +143,7 @@ CoreFoundation run loop and turns the LED off again:
 The 5-second checks are needed because after a plug-in or wake the SMC resets the
 LED in short bursts and ignores writes meanwhile. If an SMC call fails (the
 connection can go stale across sleep), it reopens the connection and tries once more.
-`SIGTERM` (when the switch turns it off), `SIGINT` and `SIGHUP` write `0x00` and exit.
+`SIGTERM` (when **Allow light control** turns it off), `SIGINT` and `SIGHUP` write `0x00` and exit.
 
 Once a minute the helper also checks its own file. When the app was updated with a copy
 signed like the running one (same Developer ID), it exits and launchd starts the new copy
@@ -155,13 +185,15 @@ Every tool found writes the same `ACLC` key, and none keeps the LED off during s
 
 ### LED values
 
-| `ACLC` | LED |
-|---|---|
-| `00` | macOS decides (reads back as its current choice) |
-| `01` | off |
-| `03` | green |
-| `04` | amber |
-| `05`–`07` | amber, blinking patterns |
+| `ACLC` | Name | LED |
+|---|---|---|
+| `00` | `system` | macOS decides (reads back as its current choice) |
+| `01` | `off` | off |
+| `03` | `green` | green |
+| `04` | `amber` | amber |
+| `05` | `blink-once` | amber, three quick blinks, then dark |
+| `06` | `blink` | amber, blinking: 0.5 s on, 1 s off |
+| `07` | | the same as `06` (batt calls them slow and fast blinking, but filmed on a MacBook Pro M5 Pro they blink identically) |
 
 The values come from batt and magled, which agree. The SMC user-client struct and
 selectors match smcFanControl's `smc.c` and batt's gosmc.
