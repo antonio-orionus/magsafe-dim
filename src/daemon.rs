@@ -127,6 +127,9 @@ static REJECTED_UPDATE: AtomicBool = AtomicBool::new(false);
 const MISSING_CHECKS_BEFORE_DELETED: u32 = 3;
 
 fn remember_own_file() {
+    if !codesign::remember_this_program() {
+        log::error("cannot read this program's signature; app updates take effect after a restart");
+    }
     let file = std::env::current_exe().and_then(|path| {
         let m = fs::metadata(&path)?;
         Ok((path, m.dev(), m.ino()))
