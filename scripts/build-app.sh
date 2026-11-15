@@ -97,7 +97,7 @@ dmg="$out/MagSafe-Dim.dmg"
 rm -f "$dmg"
 uvx --from 'dmgbuild==1.6.7' dmgbuild -s scripts/dmg-settings.py \
   -D app="$app" -D background=assets/dmg-background.tiff "MagSafe Dim" "$dmg"
-codesign --force --sign "$identity" --timestamp "$dmg"
+sign --sign "$identity" --timestamp "$dmg"  # retried: the timestamp server sometimes doesn't answer
 notarize "$dmg"
 xcrun stapler staple "$dmg"
 spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
