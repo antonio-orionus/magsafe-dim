@@ -9,24 +9,39 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/window-dark.png">
-    <img src="assets/screenshots/window-light.png" width="512" alt="The MagSafe Dim window with the switches 'Allow light control' and 'Keep the light off' turned on">
+    <img src="assets/screenshots/window-light.png" width="512" alt="The MagSafe Dim window with the switches 'Keep the light off' and 'Allow light control' turned on, and a 'Use with AI' button">
   </picture>
 </p>
 
 MagSafe Dim is a free, open-source macOS app that turns off the charging LED on a
 MacBook's MagSafe 3 connector and turns it off again after every plug-in and wake.
-One switch: no menu bar icon, no charge limit, nothing else to set up.
+One switch: no menu bar icon, no charge limit, nothing else to set up. Scripts and
+AI agents can set the light too: green, amber or blinking.
 
 ## Install
 
-Download [MagSafe-Dim.dmg](https://github.com/antonio-orionus/magsafe-dim/releases/latest/download/MagSafe-Dim.dmg),
-open it and drag MagSafe Dim to Applications, then open it from there. Turn on
-**Keep the light off**, and allow it once when macOS asks: click its notification, or
-turn on MagSafe Dim in System Settings › General › Login Items, then enter an
-administrator password.
+1. Download [MagSafe-Dim.dmg](https://github.com/antonio-orionus/magsafe-dim/releases/latest/download/MagSafe-Dim.dmg),
+   open it and drag MagSafe Dim to Applications.
+2. Open MagSafe Dim from Applications and turn on **Keep the light off**.
+3. Allow it once when macOS asks: click its notification, or turn on MagSafe Dim in
+   System Settings › General › Login Items, then enter an administrator password.
 
 Works on MacBooks with a MagSafe 3 port: MacBook Pro 14-inch and 16-inch (2021 and
 later) and MacBook Air (M2 and later).
+
+## Use with scripts and AI
+
+Once macOS has allowed it, the app shows a second switch, **Allow light control**.
+While it's on, a script can set the light, with no `sudo`, for example green when
+your tests pass:
+
+```sh
+"/Applications/MagSafe Dim.app/Contents/MacOS/magsafe-dim" set green   # or amber, blink, off, system
+```
+
+**Use with AI** in the app gives a prompt to paste into an AI agent that can run
+commands on your Mac, such as Claude Code or Codex. The agent suggests uses and sets
+up the ones you pick. Turning **Keep the light off** on brings the light back to off.
 
 ## Uninstall
 
@@ -36,7 +51,9 @@ Login Items.)
 
 ## Good to know
 
-The light comes back while the Mac sleeps, and goes off again when it wakes.
+- The light comes back while the Mac sleeps, and goes off again when it wakes.
+- **Updating from 1.0.0:** turn **Allow light control** off and on once after
+  installing the new version. The 1.0.0 helper doesn't restart itself on updates.
 
 ## License
 
@@ -61,8 +78,9 @@ Developer ID, set `SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"`
 Login Items lists it under your name. Add `NOTARY_PROFILE=<profile>`, a profile saved with
 `xcrun notarytool store-credentials`, to notarize and staple the app, then build, sign,
 notarize and staple `target/MagSafe-Dim.dmg` for download (with
-[dmgbuild](https://github.com/dmgbuild/dmgbuild), run through `uvx`). `OUT_DIR=target/dev` puts the app elsewhere. Run it
-as yourself, not with `sudo`, so `codesign` can use the key in your login keychain.
+[dmgbuild](https://github.com/dmgbuild/dmgbuild), run through `uvx`). `OUT_DIR=target/dev`
+puts the app elsewhere. Run it as yourself, not with `sudo`, so `codesign` can use the
+key in your login keychain.
 
 ### How the app is put together
 
@@ -74,23 +92,22 @@ MagSafe Dim.app/Contents/
   Resources/AppIcon.icns
 ```
 
-The **Allow light control** switch registers or unregisters the helper with Apple's `SMAppService`, which runs
-it from inside the app as a launchd daemon. The window shows the light by running
+**Allow light control** (which **Keep the light off** also turns on) registers or
+unregisters the helper with Apple's `SMAppService`, which runs it from inside the app
+as a launchd daemon. The window shows the light by running
 `magsafe-dim led`, which reads it without root. From a terminal:
 
 ```sh
 "/Applications/MagSafe Dim.app/Contents/MacOS/magsafe-dim" status   # light and helper state
-sudo "/Applications/MagSafe Dim.app/Contents/MacOS/magsafe-dim" run # foreground (switch the app off first); Ctrl-C gives the light back
+sudo "/Applications/MagSafe Dim.app/Contents/MacOS/magsafe-dim" run # foreground (turn Allow light control off first); Ctrl-C gives the light back
 log show --last 1h --predicate 'process == "magsafe-dim"'
 ```
 
 ### Other light states, for scripts
 
 While **Allow light control** is on, `magsafe-dim set` makes the helper keep another state
-instead of off, with no `sudo` (administrator accounts). **Use with AI** at the
-bottom of the app's window gives a prompt to paste into an AI agent that can run
-commands on your Mac, such as Claude Code or Codex. The agent reads
-`magsafe-dim --help`, suggests uses and sets up the ones you pick.
+instead of off, with no `sudo` (administrator accounts only). The prompt behind **Use
+with AI** only points the agent at `magsafe-dim --help`, which documents all of this.
 
 ```sh
 alias magsafe-dim="/Applications/MagSafe Dim.app/Contents/MacOS/magsafe-dim"  # scripts use the full path
@@ -102,11 +119,14 @@ magsafe-dim led             # the state the light shows now
 The helper sets it again after every plug-in and wake, as it does with off;
 `system` and `blink-once` are set once and then left alone. The choice lasts
 through restarts until the next `set`. In the app, **Keep the light off** switches
-between `off` and `system`, and turning **Allow light control** off ends any choice. Blinking amber is how a Mac reports a charging problem, so don't leave it on
-and forget it. The choice is one word in
-`/Library/Application Support/MagSafe Dim/led`: the folder belongs to root, the file
-can be changed by the admin group, and the helper accepts nothing but the names
-above.
+between `off` and `system`, and turning **Allow light control** off ends any choice.
+Blinking amber is how a Mac reports a charging problem, so don't leave it on and
+forget it.
+
+The choice is one word in `/Library/Application Support/MagSafe Dim/led`: the folder
+belongs to root, the file can be changed by the admin group, and the helper accepts
+nothing but the state names. A file needs no connection into the root helper, and
+the choice survives restarts and updates.
 
 ### What it touches
 
@@ -131,7 +151,8 @@ above.
 ### How it works
 
 macOS and the SMC rewrite `ACLC` on power events, so the daemon waits for them on a
-CoreFoundation run loop and turns the LED off again:
+CoreFoundation run loop and sets the LED back to the chosen state (off, unless a
+script chose another):
 
 | Event | Source | Check |
 |---|---|---|
@@ -182,6 +203,8 @@ Every tool found writes the same `ACLC` key, and none keeps the LED off during s
 | [rolandsuu/ChargeKeeper](https://github.com/rolandsuu/ChargeKeeper) | MIT | Charge limiter with LED control |
 | [shaoya828/magled](https://github.com/shaoya828/magled) | MIT | Swift app and helper; [a fork](https://github.com/zjhenrynsyh/magled) has macOS 27 fixes |
 | [mpopv/magsafe-cli](https://github.com/mpopv/magsafe-cli) | MIT | Also dims the cable's own LED through its firmware (one cable firmware tested) |
+| [maxim-kich/MagDot](https://github.com/maxim-kich/MagDot) | MIT | Turns the light into a status light for T3 Code agents |
+| [kamenlevi/MagHue](https://github.com/kamenlevi/MagHue) | GPL-3.0 | Menu bar app that picks the charge level at which the light turns green |
 
 ### LED values
 
@@ -195,8 +218,10 @@ Every tool found writes the same `ACLC` key, and none keeps the LED off during s
 | `06` | `blink` | amber, blinking: 0.5 s on, 1 s off |
 | `07` | | the same as `06` (batt calls them slow and fast blinking, but filmed on a MacBook Pro M5 Pro they blink identically) |
 
-The values come from batt and magled, which agree. The SMC user-client struct and
-selectors match smcFanControl's `smc.c` and batt's gosmc.
+The values come from batt and magled; the descriptions are what a MacBook Pro M5 Pro
+shows, filmed and measured. `02` is accepted but changes nothing (magled), and values
+above `07` keep only their low three bits (Battery-Toolkit). The SMC user-client struct and selectors match
+smcFanControl's `smc.c` and batt's gosmc.
 
 ### Development
 
