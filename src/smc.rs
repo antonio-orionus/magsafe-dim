@@ -72,20 +72,11 @@ struct Msg {
 
 const _: () = assert!(size_of::<Msg>() == 80, "AppleSMC expects an 80-byte struct");
 
-/// The values this program can write. Nothing else can reach the SMC.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum Write {
-    /// Hand the LED back to macOS.
-    System = 0x00,
-    Off = 0x01,
-}
-
-pub const OFF: u8 = Write::Off as u8;
-
-/// The `ACLC` values whose meaning is known. Each has a name, the word the
-/// command line prints and accepts (and the app reads), and a description for
-/// people. The values come from batt and magled, which agree.
+/// The `ACLC` values whose meaning is known, and the only values this program
+/// can write: `Smc::write` takes a `Led`, so nothing else can reach the SMC.
+/// Each has a name, the word the command line prints and accepts (and the app
+/// reads), and a description for people. The values come from batt and magled,
+/// which agree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Led {
@@ -95,23 +86,27 @@ pub enum Led {
     Green = 0x03,
     Amber = 0x04,
     BlinkOnce = 0x05,
-    BlinkSlow = 0x06,
-    BlinkFast = 0x07,
+    /// batt names 0x06 and 0x07 slow and fast blinking, but filmed on a MacBook
+    /// Pro M5 Pro both blink identically (0.5 s on, 1 s off), so only 0x06 is offered.
+    Blink = 0x06,
 }
 
 impl Led {
-    pub const ALL: [Led; 7] = [
+    pub const ALL: [Led; 6] = [
         Led::System,
         Led::Off,
         Led::Green,
         Led::Amber,
         Led::BlinkOnce,
-        Led::BlinkSlow,
-        Led::BlinkFast,
+        Led::Blink,
     ];
 
     pub fn from_value(v: u8) -> Option<Led> {
         Led::ALL.into_iter().find(|led| *led as u8 == v)
+    }
+
+    pub fn from_name(name: &str) -> Option<Led> {
+        Led::ALL.into_iter().find(|led| led.name() == name)
     }
 
     pub fn name(self) -> &'static str {
@@ -121,8 +116,7 @@ impl Led {
             Led::Green => "green",
             Led::Amber => "amber",
             Led::BlinkOnce => "blink-once",
-            Led::BlinkSlow => "blink-slow",
-            Led::BlinkFast => "blink-fast",
+            Led::Blink => "blink",
         }
     }
 
@@ -132,9 +126,8 @@ impl Led {
             Led::Off => "off",
             Led::Green => "green",
             Led::Amber => "amber",
-            Led::BlinkOnce => "amber, blinking a few times",
-            Led::BlinkSlow => "amber, blinking slowly",
-            Led::BlinkFast => "amber, blinking fast",
+            Led::BlinkOnce => "amber, blinks three times, then dark",
+            Led::Blink => "amber, blinking",
         }
     }
 }
@@ -267,7 +260,7 @@ impl Smc {
         Ok(self.call(&input)?.bytes[0])
     }
 
-    pub fn write(&self, value: Write) -> Result<()> {
+    pub fn write(&self, value: Led) -> Result<()> {
         self.check_key()?;
         let mut input = Msg {
             key: KEY,
@@ -315,14 +308,9 @@ mod tests {
     fn names_and_values_round_trip() {
         for led in Led::ALL {
             assert_eq!(Led::from_value(led as u8), Some(led));
+            assert_eq!(Led::from_name(led.name()), Some(led));
         }
         assert_eq!(Led::from_value(0x02), None);
         assert_eq!(name(0x02), "unknown");
-    }
-
-    #[test]
-    fn only_two_values_can_be_written() {
-        assert_eq!(Write::System as u8, 0x00);
-        assert_eq!(Write::Off as u8, 0x01);
     }
 }

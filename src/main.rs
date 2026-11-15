@@ -1,8 +1,9 @@
 //! magsafe-dim: keep the LED on a MacBook's MagSafe 3 connector off.
 //!
 //! The LED is the one-byte AppleSMC key `ACLC`. This program touches that key
-//! and nothing else, and can only write two values to it: off while it runs,
-//! and "macOS decides" when it stops.
+//! and nothing else, and writes only the states in `smc::Led`. While it runs
+//! it keeps the LED off, or in the state chosen with `set` (see target.rs);
+//! when it stops it gives the LED back to macOS.
 //!
 //! The MagSafe Dim app registers `magsafe-dim run` as a launchd daemon with
 //! SMAppService; this binary is that daemon, plus a few commands for the terminal.
@@ -11,33 +12,54 @@ mod codesign;
 mod daemon;
 mod log;
 mod smc;
+mod target;
 
+use std::io;
+use std::path::Path;
 use std::process::{Command, ExitCode, Stdio};
 
 /// The launchd label of the daemon the app registers.
 const DAEMON_LABEL: &str = "dev.orionus.magsafe-dim.daemon";
 
 const USAGE: &str = "\
-magsafe-dim: keep the MagSafe 3 connector LED off
+magsafe-dim: the MagSafe 3 connector LED on a MacBook
 
-Install and switch it on with the MagSafe Dim app. From a terminal:
+The MagSafe Dim app runs this program as a helper that keeps the LED off.
+Turn it on with the switch \"Allow light control\" in the app. From a terminal:
 
-  magsafe-dim status          show the LED and the daemon state
-  magsafe-dim led             print the LED state's name only (see below)
-  sudo magsafe-dim run        keep the LED off in the foreground (Ctrl-C to stop)
+  magsafe-dim status          show the LED, the helper and the state it keeps
+  magsafe-dim led             print the name of the state the LED shows now
+  magsafe-dim set STATE       make the helper keep STATE instead of off
+  magsafe-dim target          print the name of the state the helper keeps
+  sudo magsafe-dim run        be the helper in the foreground (switch the app off
+                              first; Ctrl-C gives the LED back to macOS)
   sudo magsafe-dim restore    give the LED back to macOS once
   magsafe-dim --version
 
 LED states:
 ";
 
-/// The usage text, ending with every LED state's name and description.
+const NOTES: &str = "
+About set:
+  - Needs no sudo, but an administrator account, and works only while
+    \"Allow light control\" is on in the app. The app's \"Keep the light off\"
+    switch sets off or system; turning light control off ends any chosen state.
+  - The helper sets the LED to STATE at once and again after every plug-in and
+    wake, until the next set, also across restarts. system and blink-once are
+    set once and then left alone.
+  - The LED shows the state only while a charger is connected, and macOS turns
+    it on while the Mac sleeps.
+  - Blinking amber is how a Mac reports a charging problem; set a calm state
+    when done with it.
+";
+
+/// The usage text: commands, every LED state's name and description, notes.
 fn usage() -> String {
     let mut text = USAGE.to_string();
     for led in smc::Led::ALL {
         text += &format!("  {:<12} {}\n", led.name(), led.description());
     }
-    text
+    text + NOTES
 }
 
 fn need_root(cmd: &str) -> Result<(), String> {
@@ -83,8 +105,13 @@ fn status() -> Result<(), String> {
     let v = read_led()?;
     println!("LED:    {} (ACLC = 0x{v:02x})", smc::describe(v));
     match daemon_state() {
-        Some(state) => println!("daemon: {state} ({DAEMON_LABEL})"),
-        None => println!("daemon: not running (switch it on in the MagSafe Dim app)"),
+        Some(state) => {
+            println!("daemon: {state} ({DAEMON_LABEL})");
+            println!("keeps:  {}", chosen().description());
+        }
+        None => {
+            println!("daemon: not running (turn on \"Allow light control\" in the MagSafe Dim app)")
+        }
     }
     Ok(())
 }
@@ -103,10 +130,41 @@ fn led() -> Result<(), String> {
     Ok(())
 }
 
+/// The state the helper keeps: what the file says, or off without a valid one.
+fn chosen() -> smc::Led {
+    target::read(Path::new(target::FILE))
+        .ok()
+        .flatten()
+        .unwrap_or(smc::Led::Off)
+}
+
+fn set(name: &str) -> Result<(), String> {
+    let led = smc::Led::from_name(name)
+        .ok_or_else(|| format!("unknown LED state '{name}' (see magsafe-dim --help)"))?;
+    if daemon_state().is_none() {
+        return Err(
+            "the helper is off: turn on \"Allow light control\" in the MagSafe Dim app first"
+                .into(),
+        );
+    }
+    target::write(Path::new(target::FILE), led).map_err(|e| match e.kind() {
+        io::ErrorKind::NotFound => {
+            "the helper hasn't made its state file yet: it does when it starts. \
+             After updating from 1.0.0, turn \"Allow light control\" off and on \
+             once in the app (1.0.0's helper doesn't restart itself on updates)"
+                .to_string()
+        }
+        io::ErrorKind::PermissionDenied => "only administrators can set the LED".to_string(),
+        _ => format!("cannot write {}: {e}", target::FILE),
+    })?;
+    println!("the helper keeps the LED {} now", led.description());
+    Ok(())
+}
+
 fn restore() -> Result<(), String> {
     need_root("restore")?;
     let smc = smc::Smc::open().map_err(|e| e.to_string())?;
-    smc.write(smc::Write::System).map_err(|e| e.to_string())?;
+    smc.write(smc::Led::System).map_err(|e| e.to_string())?;
     println!("LED given back to macOS");
     Ok(())
 }
@@ -122,6 +180,11 @@ fn main() -> ExitCode {
             log::init(unsafe { libc::isatty(2) } == 1);
             daemon::run()
         }),
+        ["set", name] => set(name),
+        ["target"] => {
+            println!("{}", chosen().name());
+            Ok(())
+        }
         ["restore"] => restore(),
         ["--version" | "-V"] => {
             println!("magsafe-dim {}", env!("CARGO_PKG_VERSION"));
