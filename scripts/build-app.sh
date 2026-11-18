@@ -6,14 +6,17 @@
 #   SIGN_IDENTITY=... NOTARY_PROFILE=magsafe-dim scripts/build-app.sh
 #       also notarizes and staples the app, then builds, signs, notarizes and
 #       staples target/MagSafe-Dim.dmg for download (needs uv for dmgbuild), and
-#       writes target/appcast.xml for Sparkle, signed with the EdDSA key in the
-#       login keychain (account magsafe-dim). RELEASE_NOTES=<file.md> puts the
-#       notes in the update window.
+#       writes target/appcast.xml for Sparkle, signed with its EdDSA key.
+#       RELEASE_NOTES=<file.md> puts the notes in the update window.
 #       NOTARY_PROFILE names credentials saved with `xcrun notarytool store-credentials`.
 #   OUT_DIR=target/dev scripts/build-app.sh    put the app somewhere else (default: target;
 #                                              relative to the repository root)
 #
-# Run it as yourself, not with sudo, so codesign can use the key in your login keychain.
+# Keys: from SIGN_KEYCHAIN (default ~/Library/Keychains/signing.keychain-db) when it
+# exists, a keychain that locks itself after a few idle minutes: the Developer ID
+# identity, usable by codesign without asking, and the Sparkle key as the generic
+# password magsafe-dim-sparkle. Without it, both come from the login keychain, which
+# asks at every use. Run it as yourself, not with sudo, so it can use your keychains.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -21,6 +24,8 @@ version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 out="${OUT_DIR:-target}"
 app="$out/MagSafe Dim.app"
 identity="${SIGN_IDENTITY:--}"
+keychain="${SIGN_KEYCHAIN:-$HOME/Library/Keychains/signing.keychain-db}"
+[ -f "$keychain" ] || keychain=
 
 # The app is arm64 only (MagSafe 3 Macs are Apple silicon), so build the helper for it.
 cargo build --release --locked --target aarch64-apple-darwin
@@ -53,10 +58,24 @@ if [ "$identity" = "-" ]; then
 else
   set -- --sign "$identity" --options runtime --timestamp
 fi
-# Apple's timestamp server sometimes doesn't answer: try three times.
+# Apple's timestamp server sometimes doesn't answer: try three times. Not when the
+# key was refused (a dialog cancelled or timed out), which would only ask again.
 sign() {
+  if [ "$identity" != "-" ] && [ -n "$keychain" ]; then
+    set -- --keychain "$keychain" "$@"
+  fi
   for attempt in 1 2 3; do
-    codesign --force "$@" && return 0
+    if result="$(codesign --force "$@" 2>&1)"; then
+      [ -z "$result" ] || printf '%s\n' "$result"
+      return 0
+    fi
+    printf '%s\n' "$result" >&2
+    case "$result" in
+      *errSecInternalComponent* | *"User interaction is not allowed"* | *"canceled"*)
+        echo "codesign: the signing key was refused; not retrying" >&2
+        return 1
+        ;;
+    esac
     echo "codesign attempt $attempt failed; retrying in 5 s" >&2
     sleep 5
   done
@@ -109,10 +128,19 @@ ditto -c -k --norsrc --noextattr --keepParent "$app" "$zip"
 spctl --assess --type exec --verbose=2 "$app"
 
 # Sparkle's feed: one item, the zip above, which the release must carry as
-# MagSafe-Dim.zip next to appcast.xml. sign_update reads the EdDSA key from the
-# login keychain (macOS may ask to allow it) and signs the zip and then the feed.
+# MagSafe-Dim.zip next to appcast.xml, both signed with the EdDSA key: piped from
+# the signing keychain, or read by sign_update from the login keychain.
+sparkle_sign() {
+  if [ -n "$keychain" ] &&
+    security find-generic-password -s magsafe-dim-sparkle -a magsafe-dim "$keychain" >/dev/null 2>&1; then
+    security find-generic-password -s magsafe-dim-sparkle -a magsafe-dim -w "$keychain" |
+      target/sparkle/bin/sign_update --ed-key-file - "$@"
+  else
+    target/sparkle/bin/sign_update --account magsafe-dim "$@"
+  fi
+}
 repo=https://github.com/antonio-orionus/magsafe-dim
-enclosure="$(target/sparkle/bin/sign_update --account magsafe-dim "$zip")"
+enclosure="$(sparkle_sign "$zip")"
 notes=
 if [ -n "${RELEASE_NOTES:-}" ]; then
   if grep -q ']]>' "$RELEASE_NOTES"; then
@@ -143,8 +171,8 @@ $notes
 </rss>
 FEED
 xmllint --noout "$appcast"
-target/sparkle/bin/sign_update --account magsafe-dim "$appcast"
-target/sparkle/bin/sign_update --account magsafe-dim --verify "$appcast"
+sparkle_sign "$appcast"
+sparkle_sign --verify "$appcast"
 
 # 2. The download: a disk image with the stapled app and a link to Applications,
 #    laid out by dmgbuild (scripts/dmg-settings.py), then signed, notarized, stapled.

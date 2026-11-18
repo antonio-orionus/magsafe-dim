@@ -280,8 +280,10 @@ which downloads Sparkle into `target/sparkle` once.
 A release uploads three files from `target/`: `MagSafe-Dim.dmg` (the download),
 `MagSafe-Dim.zip` (what Sparkle installs) and `appcast.xml` (Sparkle's feed, read
 from the latest release). The build signs the zip and the feed with the EdDSA key
-in the login keychain (`generate_keys --account magsafe-dim`); the app accepts
-neither without it, so a lost key means users can't update. To test the first-run approval, use a fresh macOS VM:
+made by `generate_keys --account magsafe-dim`; the app accepts neither without it,
+so a lost key means users can't update. `build-app.sh` explains where it looks for
+the keys: a keychain of their own that locks after a few idle minutes saves a
+Keychain prompt at every signature. To test the first-run approval, use a fresh macOS VM:
 macOS remembers approvals, so a Mac that has allowed MagSafe Dim before won't ask again.
 
 The icon is drawn in [`assets/icon.svg`](assets/icon.svg) and the disk image window's
