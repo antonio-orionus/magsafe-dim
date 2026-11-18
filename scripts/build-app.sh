@@ -15,8 +15,10 @@
 # Keys: from SIGN_KEYCHAIN (default ~/Library/Keychains/signing.keychain-db) when it
 # exists, a keychain that locks itself after a few idle minutes: the Developer ID
 # identity, usable by codesign without asking, and the Sparkle key as the generic
-# password magsafe-dim-sparkle. Without it, both come from the login keychain, which
-# asks at every use. Run it as yourself, not with sudo, so it can use your keychains.
+# password magsafe-dim-sparkle. Before each signing step the build runs SIGN_UNLOCK
+# (default ~/.local/bin/unlock-signing-keychain), which unlocks it after Touch ID
+# and does nothing while it is unlocked. Without that keychain, both keys come from
+# the login keychain, which asks at every use. Run it as yourself, not with sudo.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -26,6 +28,12 @@ app="$out/MagSafe Dim.app"
 identity="${SIGN_IDENTITY:--}"
 keychain="${SIGN_KEYCHAIN:-$HOME/Library/Keychains/signing.keychain-db}"
 [ -f "$keychain" ] || keychain=
+unlocker="${SIGN_UNLOCK:-$HOME/.local/bin/unlock-signing-keychain}"
+unlock_keys() {
+  if [ "$identity" != "-" ] && [ -n "$keychain" ] && [ -x "$unlocker" ]; then
+    "$unlocker"
+  fi
+}
 
 # The app is arm64 only (MagSafe 3 Macs are Apple silicon), so build the helper for it.
 cargo build --release --locked --target aarch64-apple-darwin
@@ -81,6 +89,7 @@ sign() {
   done
   return 1
 }
+unlock_keys
 sign "$@" "$sparkle/Versions/B/Autoupdate"
 sign "$@" "$sparkle/Versions/B/Updater.app"
 sign "$@" "$sparkle"
@@ -140,6 +149,7 @@ sparkle_sign() {
   fi
 }
 repo=https://github.com/antonio-orionus/magsafe-dim
+unlock_keys  # notarization took a while: the keychain may have locked meanwhile
 enclosure="$(sparkle_sign "$zip")"
 notes=
 if [ -n "${RELEASE_NOTES:-}" ]; then
@@ -180,6 +190,7 @@ dmg="$out/MagSafe-Dim.dmg"
 rm -f "$dmg"
 uvx --from 'dmgbuild==1.6.7' dmgbuild -s scripts/dmg-settings.py \
   -D app="$app" -D background=assets/dmg-background.tiff "MagSafe Dim" "$dmg"
+unlock_keys
 sign --sign "$identity" --timestamp "$dmg"  # retried: the timestamp server sometimes doesn't answer
 notarize "$dmg"
 xcrun stapler staple "$dmg"
