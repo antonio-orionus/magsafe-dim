@@ -1,7 +1,9 @@
 // In-app updates with Sparkle. The app has no menu bar icon, so Sparkle checks
 // only while the window is open: on each launch once a day has passed since the
 // last check (Info.plist: SUEnableAutomaticChecks, SUScheduledCheckInterval), and
-// from "Check for Updates…" in the app menu.
+// from "Check for Updates…" in the app menu. An update found by the automatic
+// check downloads in the background and installs when the app quits, with no
+// dialog (SUAutomaticallyUpdate); "Check for Updates…" still asks.
 //
 // The feed is appcast.xml on the latest GitHub release; Sparkle accepts it and the
 // update only with the EdDSA signature of the key in Info.plist (SUPublicEDKey),

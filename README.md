@@ -46,10 +46,15 @@ up the ones you pick. Turning **Keep the light off** on brings the light back to
 
 ## Updates
 
-From 1.2.0, MagSafe Dim checks for a new version when you open it, at most once a
-day and not on its very first launch, and offers to install it; **Check for
-Updates…** in the app menu checks now. It can't check while closed, since it has no menu bar icon. Updating
-from 1.1.0 or earlier: download the new version once as in [Install](#install).
+MagSafe Dim updates itself: when you open it (at most once a day, and not on its
+very first launch) it looks for a new version, downloads it in the background and
+installs it when you close the window. **Check for Updates…** in the app menu checks
+now. It can't update while closed, since it has no menu bar icon. Updates are signed
+with the author's keys, and the helper restarts into the new version on its own.
+
+- **From 1.2.0:** 1.2.0 asks once before installing the next version; from then on
+  updates are silent.
+- **From 1.1.0 or earlier:** download the new version once as in [Install](#install).
 
 ## Privacy
 
