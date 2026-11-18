@@ -22,6 +22,18 @@
 	<string>13.0</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/antonio-orionus/magsafe-dim/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>PhwN5UDNNLdXmdDmSpAcDh4mIXwQF4a0TC63yRtSJAE=</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Antonio Orionus. MIT License.</string>
 </dict>

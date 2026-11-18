@@ -1,4 +1,4 @@
-// MagSafe Dim's window: one switch and its status.
+// MagSafe Dim's window: the light switches and their status.
 //
 // The helper switch registers or unregisters the bundled `magsafe-dim` daemon with
 // SMAppService. macOS asks the user to approve it once in Login Items; after
@@ -17,13 +17,23 @@ final class Model: ObservableObject {
     /// "off", "green", ..., or "unknown" or "unsupported".
     @Published private(set) var light = "unknown"
     /// The state the helper keeps, as `magsafe-dim target` prints it: "off" unless
-    /// `magsafe-dim set` chose another.
+    /// `magsafe-dim set` chose another; "night" for off from sunset to sunrise.
     @Published private(set) var target = "off"
+    /// Tonight's or the current night's times, read with `magsafe-dim sun` while
+    /// the helper keeps the light off at night.
+    @Published private(set) var sun: Sun?
+    /// The daily heartbeat as `magsafe-dim heartbeat` prints it: "on", "off", or
+    /// "unavailable" in a build that never sends it (not the author's Developer ID).
+    @Published private(set) var heartbeat = "on"
+    /// Why the heartbeat switch couldn't change, shown in the About window.
+    @Published var heartbeatError: String?
     /// The helper is on, but the light has stayed on for a while: it isn't working.
     @Published private(set) var stuck = false
     @Published var error: String?
     private var timer: Timer?
     private var refreshing = false
+    /// Counts writes, so a refresh that started before one doesn't undo its switch.
+    private var writes = 0
     private var notOffSince: Date?
 
     init() {
@@ -41,10 +51,11 @@ final class Model: ObservableObject {
 
     /// A fixed state for the preview tool: no service calls, no timer.
     init(preview status: SMAppService.Status, light: String, target: String = "off",
-         error: String? = nil, stuck: Bool = false) {
+         sun: Sun? = nil, error: String? = nil, stuck: Bool = false) {
         self.status = status
         self.light = light
         self.target = target
+        self.sun = sun
         self.error = error
         self.stuck = stuck
     }
@@ -86,10 +97,15 @@ final class Model: ObservableObject {
         refresh()
     }
 
-    /// Ends a state chosen with `magsafe-dim set`: the helper keeps the light off again.
-    /// The light switch: on while the helper keeps the light off. Off when it
-    /// keeps macOS's choice (`system`) or a state a script set.
-    var keepsLightOff: Bool { target == "off" }
+    /// The light switch: on while the helper keeps the light off, all the time
+    /// or at night. Off when it keeps macOS's choice (`system`) or a state a script set.
+    var keepsLightOff: Bool { target == "off" || target == "night" }
+
+    /// The "Only at night" switch.
+    var nightOnly: Bool { target == "night" }
+
+    /// Whether the helper keeps the light off right now.
+    var offNow: Bool { target == "off" || (target == "night" && sun?.night == true) }
 
     /// The "Keep the light off" switch. On: turns light control on if needed (the
     /// helper keeps the light off by default) or sets the light back to off.
@@ -99,27 +115,57 @@ final class Model: ObservableObject {
         if !isOn {
             if on { set(on: true) }
         } else if status == .enabled {
-            setLight(off: on)
+            setTarget(on ? "off" : "system")
         } else if !on {
             set(on: false)
         }
     }
 
-    /// Switches between keeping the light off and leaving it to macOS (and to
-    /// scripts). Works only while the helper runs, like `magsafe-dim set`.
-    func setLight(off: Bool) {
+    /// The "Only at night" switch: off from sunset to sunrise, or all the time.
+    func setNightOnly(_ on: Bool) {
+        setTarget(on ? "night" : "off")
+    }
+
+    /// Makes the helper keep `state` ("off", "system", "night"). Works only while
+    /// the helper runs, like `magsafe-dim set`.
+    func setTarget(_ state: String) {
         error = nil
-        target = off ? "off" : "system"  // the switch moves at once; refresh confirms
+        writes += 1
+        target = state  // the switch moves at once; refresh confirms
         Task.detached(priority: .userInitiated) {
-            let done = Model.helper(["set", off ? "off" : "system"]) != nil
-            await self.finishSettingLight(done)
+            let done = Model.run(["set", state]).ok
+            // Night's times come with it, so the status never shows the light turning off by day.
+            let sun = state == "night" ? Model.helper(["sun"]).flatMap(Sun.init) : nil
+            await self.finishSettingLight(done, sun: sun)
         }
     }
 
-    private func finishSettingLight(_ done: Bool) {
+    /// The heartbeat switch in the About window.
+    func setHeartbeat(_ on: Bool) {
+        heartbeatError = nil
+        writes += 1
+        heartbeat = on ? "on" : "off"
+        Task.detached(priority: .userInitiated) {
+            let result = Model.run(["heartbeat", on ? "on" : "off"])
+            await self.finishSettingHeartbeat(result)
+        }
+    }
+
+    private func finishSettingHeartbeat(_ result: (ok: Bool, output: String, error: String)) {
+        if !result.ok {
+            let why = result.error.isEmpty ? "Only administrators can change it." : result.error
+            heartbeatError = "Couldn't change the heartbeat: \(why)"
+        }
+        writes += 1  // a refresh that started meanwhile read the old state
+        refresh()
+    }
+
+    private func finishSettingLight(_ done: Bool, sun: Sun?) {
         if !done {
             error = "Couldn't change the light. Turn “Allow light control” off and on again."
         }
+        if let sun { self.sun = sun }
+        writes += 1
         refresh()
     }
 
@@ -127,22 +173,34 @@ final class Model: ObservableObject {
     func refresh() {
         guard !refreshing else { return }
         refreshing = true
+        let started = writes
         Task.detached(priority: .utility) {
             let status = SMAppService.daemon(plistName: Model.plistName).status
             let light = Model.helper(["led"]) ?? "unknown"
             let target = Model.helper(["target"]) ?? "off"
-            await self.show(status: status, light: light, target: target)
+            let sun = target == "night" ? Model.helper(["sun"]).flatMap(Sun.init) : nil
+            let heartbeat = Model.helper(["heartbeat"]) ?? "on"
+            await self.show(status: status, light: light, target: target, sun: sun, heartbeat: heartbeat,
+                            started: started)
         }
     }
 
-    private func show(status: SMAppService.Status, light: String, target: String) {
+    private func show(status: SMAppService.Status, light: String, target: String, sun: Sun?, heartbeat: String,
+                      started: Int) {
         refreshing = false
+        // A switch changed while this was read: what it read is out of date.
+        guard started == writes else {
+            refresh()
+            return
+        }
         self.status = status
         self.light = light
         self.target = target
+        self.sun = sun
+        self.heartbeat = heartbeat
         // On, but the light hasn't gone off within 10 s: the helper isn't working.
         // A state chosen with `magsafe-dim set` is the script's business, not checked.
-        if status == .enabled && supported && target == "off" && light != "off" {
+        if status == .enabled && supported && offNow && light != "off" {
             let since = notOffSince ?? Date()
             notOffSince = since
             stuck = Date().timeIntervalSince(since) > 10
@@ -159,22 +217,65 @@ final class Model: ObservableObject {
     /// Runs the bundled helper binary with `arguments` and returns its output's
     /// first line, or nil if it failed. Its read commands need no root.
     nonisolated private static func helper(_ arguments: [String]) -> String? {
-        guard let url = Bundle.main.url(forAuxiliaryExecutable: "magsafe-dim") else { return nil }
+        let result = run(arguments)
+        return result.ok && !result.output.isEmpty ? result.output : nil
+    }
+
+    /// Runs the bundled helper binary: whether it succeeded, its output, and its
+    /// error message without the "magsafe-dim: " prefix.
+    nonisolated private static func run(_ arguments: [String]) -> (ok: Bool, output: String, error: String) {
+        guard let url = Bundle.main.url(forAuxiliaryExecutable: "magsafe-dim") else { return (false, "", "") }
         let process = Process()
-        let pipe = Pipe()
+        let out = Pipe(), err = Pipe()
         process.executableURL = url
         process.arguments = arguments
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
+        process.standardOutput = out
+        process.standardError = err
         do {
             try process.run()
         } catch {
-            return nil
+            return (false, "", "")
         }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        // Both are a line or two, far below a pipe's buffer, so reading one after the other can't block.
+        let output = out.fileHandleForReading.readDataToEndOfFile()
+        let errors = err.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return process.terminationStatus == 0 && !text.isEmpty ? text : nil
+        let text = { (data: Data) in String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) }
+        var message = text(errors)
+        if message.hasPrefix("magsafe-dim: ") { message.removeFirst("magsafe-dim: ".count) }
+        return (process.terminationStatus == 0, text(output), message)
+    }
+}
+
+/// Day or night, and the night's times, as `magsafe-dim sun` prints them:
+/// "night 1795009266 1795064389 macos".
+struct Sun: Equatable {
+    var night: Bool
+    var sunset: Date
+    var sunrise: Date
+    /// False when macOS has no times (no location) and night is 20:00 to 07:00.
+    var fromMacOS = true
+
+    init(night: Bool, sunset: Date, sunrise: Date, fromMacOS: Bool = true) {
+        self.night = night
+        self.sunset = sunset
+        self.sunrise = sunrise
+        self.fromMacOS = fromMacOS
+    }
+
+    init?(_ line: String) {
+        let words = line.split(separator: " ")
+        guard words.count == 4, words[0] == "night" || words[0] == "day",
+              let sunset = Double(words[1]), let sunrise = Double(words[2]) else { return nil }
+        self.init(night: words[0] == "night",
+                  sunset: Date(timeIntervalSince1970: sunset),
+                  sunrise: Date(timeIntervalSince1970: sunrise),
+                  fromMacOS: words[3] == "macos")
+    }
+
+    /// A time as the user's clock shows it: "16:41" or "4:41 PM".
+    static func clock(_ date: Date) -> String {
+        date.formatted(date: .omitted, time: .shortened)
     }
 }
 
@@ -209,8 +310,16 @@ struct ContentView: View {
                               // Nothing to turn on on a Mac without the light; turning off stays possible.
                               enabled: model.supported || model.isOn,
                               // Only once the light is off: under a warning it's noise.
-                              note: model.status == .enabled && model.supported && model.keepsLightOff && model.light == "off"
+                              note: model.status == .enabled && model.supported && model.offNow && model.light == "off"
                                   ? "It comes back while the Mac sleeps, and goes off when it wakes." : nil)
+                    // Only while the light is kept off: at night only, or all the time.
+                    // Indented with no divider, so it reads as part of the switch above.
+                    if model.status == .enabled && model.supported && model.keepsLightOff {
+                        SwitchRow(title: "Only at night", status: (nightText, nil, .secondary),
+                                  isOn: Binding(get: { model.nightOnly }, set: { model.setNightOnly($0) }),
+                                  enabled: true)
+                            .padding(.leading, 20)
+                    }
                     // Shown once macOS has allowed it: a first open has one switch, and
                     // from then on light control can stay on with the light left to macOS
                     // (for scripts and AI). Turning it off hides it again.
@@ -276,6 +385,14 @@ struct ContentView: View {
 
     typealias Status = (text: String, symbol: String?, color: Color)
 
+    /// The line under "Only at night".
+    private var nightText: String {
+        guard model.nightOnly else { return "Let the light show by day" }
+        guard let sun = model.sun else { return "Light off from sunset to sunrise" }
+        let times = "Light off from \(Sun.clock(sun.sunset)) to \(Sun.clock(sun.sunrise))"
+        return sun.fromMacOS ? times : "\(times): turn on Location Services for sunset times"
+    }
+
     /// The line under the light-control switch.
     private var helperStatus: Status {
         if !model.supported {
@@ -311,6 +428,14 @@ struct ContentView: View {
         switch model.target {
         case "off":
             break
+        case "night":
+            guard let sun = model.sun else { break }
+            if !sun.night {
+                return ("The light goes off at \(Sun.clock(sun.sunset))", "moon", .secondary)
+            }
+            if model.light == "off" {
+                return ("The light is off until \(Sun.clock(sun.sunrise))", "checkmark.circle.fill", .green)
+            }
         case "system":
             return ("macOS controls the light", nil, .secondary)
         default:
@@ -492,10 +617,21 @@ struct AgentView: View {
 // MARK: - About
 
 struct AboutView: View {
+    @ObservedObject var model: Model
     var icon: NSImage = NSApp.applicationIconImage
     var version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
 
     private static let repo = URL(string: "https://github.com/antonio-orionus/magsafe-dim")!
+
+    private var heartbeatNote: String {
+        if model.heartbeat == "unavailable" {
+            return "This copy wasn't built by the author, so it never sends one."
+        }
+        if model.status != .enabled {
+            return "Turn on “Allow light control” in the main window to change this."
+        }
+        return "Once a day: app version, macOS version and Mac model. It counts how many Macs use MagSafe Dim."
+    }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -521,6 +657,22 @@ struct AboutView: View {
                 LinkRow(title: "Report a problem", detail: "GitHub Issues", url: Self.repo.appending(path: "issues"))
                 Divider()
                 LinkRow(title: "License", detail: "MIT", url: Self.repo.appending(path: "blob/main/LICENSE"))
+            }
+
+            // The helper sends it, so it can only change while the helper runs.
+            Card {
+                SwitchRow(title: "Send a daily heartbeat", status: ("Anonymous, no ID", nil, .secondary),
+                          isOn: Binding(get: { model.heartbeat == "on" }, set: { model.setHeartbeat($0) }),
+                          enabled: model.status == .enabled && model.heartbeat != "unavailable",
+                          note: heartbeatNote)
+                if let error = model.heartbeatError {
+                    Label {
+                        Text(error).fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                    }
+                    .font(.callout)
+                }
             }
 
             MadeBy()

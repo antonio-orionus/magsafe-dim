@@ -30,5 +30,7 @@ jobs:
       - run: cargo build --release --locked
       - name: Type-check the app
         run: |
-          swiftc -typecheck -parse-as-library -swift-version 5 -target arm64-apple-macos13.0 app/Main.swift app/MagSafeDim.swift
+          scripts/fetch-sparkle.sh
+          swiftc -typecheck -parse-as-library -swift-version 5 -target arm64-apple-macos13.0 \
+            -F target/sparkle app/Main.swift app/MagSafeDim.swift app/Updater.swift
           swiftc -typecheck -parse-as-library -swift-version 5 -target arm64-apple-macos13.0 app/MagSafeDim.swift app/Preview.swift

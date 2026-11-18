@@ -5,7 +5,10 @@
 #   SIGN_IDENTITY="Developer ID Application: Name (TEAMID)" scripts/build-app.sh
 #   SIGN_IDENTITY=... NOTARY_PROFILE=magsafe-dim scripts/build-app.sh
 #       also notarizes and staples the app, then builds, signs, notarizes and
-#       staples target/MagSafe-Dim.dmg for download (needs uv for dmgbuild).
+#       staples target/MagSafe-Dim.dmg for download (needs uv for dmgbuild), and
+#       writes target/appcast.xml for Sparkle, signed with the EdDSA key in the
+#       login keychain (account magsafe-dim). RELEASE_NOTES=<file.md> puts the
+#       notes in the update window.
 #       NOTARY_PROFILE names credentials saved with `xcrun notarytool store-credentials`.
 #   OUT_DIR=target/dev scripts/build-app.sh    put the app somewhere else (default: target;
 #                                              relative to the repository root)
@@ -21,19 +24,30 @@ identity="${SIGN_IDENTITY:--}"
 
 # The app is arm64 only (MagSafe 3 Macs are Apple silicon), so build the helper for it.
 cargo build --release --locked --target aarch64-apple-darwin
+scripts/fetch-sparkle.sh
 
 rm -rf "${app:?}"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Library/LaunchDaemons"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Library/LaunchDaemons" \
+  "$app/Contents/Frameworks"
 
 swiftc -O -parse-as-library -swift-version 5 -target arm64-apple-macos13.0 \
-  -o "$app/Contents/MacOS/MagSafe Dim" app/Main.swift app/MagSafeDim.swift
+  -F target/sparkle -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
+  -o "$app/Contents/MacOS/MagSafe Dim" app/Main.swift app/MagSafeDim.swift app/Updater.swift
 cp target/aarch64-apple-darwin/release/magsafe-dim "$app/Contents/MacOS/magsafe-dim"
+# Sparkle's XPC services are for sandboxed apps only (this app isn't), and its
+# headers only for compiling.
+sparkle="$app/Contents/Frameworks/Sparkle.framework"
+ditto target/sparkle/Sparkle.framework "$sparkle"
+for unused in XPCServices Headers PrivateHeaders Modules; do
+  rm -rf "${sparkle:?}/Versions/B/$unused" "${sparkle:?}/$unused"
+done
 sed "s/@VERSION@/$version/g" app/Info.plist > "$app/Contents/Info.plist"
 cp app/dev.orionus.magsafe-dim.daemon.plist "$app/Contents/Library/LaunchDaemons/"
 cp assets/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 plutil -lint -s "$app/Contents/Info.plist" "$app/Contents/Library/LaunchDaemons/dev.orionus.magsafe-dim.daemon.plist"
 
-# Sign inside out: the daemon first, then the app, which seals everything in it.
+# Sign inside out: Sparkle's helpers, Sparkle, the daemon, then the app, which seals
+# everything in it.
 if [ "$identity" = "-" ]; then
   set -- --sign -
 else
@@ -48,6 +62,9 @@ sign() {
   done
   return 1
 }
+sign "$@" "$sparkle/Versions/B/Autoupdate"
+sign "$@" "$sparkle/Versions/B/Updater.app"
+sign "$@" "$sparkle"
 sign "$@" --identifier dev.orionus.magsafe-dim.daemon "$app/Contents/MacOS/magsafe-dim"
 sign "$@" "$app"
 codesign --verify --strict --deep "$app"
@@ -91,6 +108,44 @@ rm -f "$zip"
 ditto -c -k --norsrc --noextattr --keepParent "$app" "$zip"
 spctl --assess --type exec --verbose=2 "$app"
 
+# Sparkle's feed: one item, the zip above, which the release must carry as
+# MagSafe-Dim.zip next to appcast.xml. sign_update reads the EdDSA key from the
+# login keychain (macOS may ask to allow it) and signs the zip and then the feed.
+repo=https://github.com/antonio-orionus/magsafe-dim
+enclosure="$(target/sparkle/bin/sign_update --account magsafe-dim "$zip")"
+notes=
+if [ -n "${RELEASE_NOTES:-}" ]; then
+  if grep -q ']]>' "$RELEASE_NOTES"; then
+    echo "$RELEASE_NOTES contains ]]>, which would end the feed's CDATA" >&2
+    exit 1
+  fi
+  notes="      <description sparkle:format=\"markdown\"><![CDATA[
+$(cat "$RELEASE_NOTES")
+]]></description>"
+fi
+appcast="$out/appcast.xml"
+cat > "$appcast" <<FEED
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>MagSafe Dim</title>
+    <item>
+      <title>MagSafe Dim $version</title>
+      <pubDate>$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')</pubDate>
+      <sparkle:version>$version</sparkle:version>
+      <sparkle:shortVersionString>$version</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>$repo/releases/tag/v$version</sparkle:fullReleaseNotesLink>
+$notes
+      <enclosure url="$repo/releases/download/v$version/MagSafe-Dim.zip" type="application/octet-stream" $enclosure/>
+    </item>
+  </channel>
+</rss>
+FEED
+xmllint --noout "$appcast"
+target/sparkle/bin/sign_update --account magsafe-dim "$appcast"
+target/sparkle/bin/sign_update --account magsafe-dim --verify "$appcast"
+
 # 2. The download: a disk image with the stapled app and a link to Applications,
 #    laid out by dmgbuild (scripts/dmg-settings.py), then signed, notarized, stapled.
 dmg="$out/MagSafe-Dim.dmg"
@@ -101,4 +156,4 @@ sign --sign "$identity" --timestamp "$dmg"  # retried: the timestamp server some
 notarize "$dmg"
 xcrun stapler staple "$dmg"
 spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
-echo "notarized and stapled; download: $dmg"
+echo "notarized and stapled; release assets: $dmg $zip $appcast"

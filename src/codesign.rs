@@ -5,6 +5,9 @@
 //! This program's own requirement is read once, at startup: an update moves the
 //! old app away and deletes it, and after that macOS can no longer read the
 //! running program's signature (it fails with "no such file").
+//!
+//! Also says whether this program is signed with a given Developer ID team, which
+//! keeps builds from source off the heartbeat collector (heartbeat.rs).
 
 use std::ffi::c_void;
 use std::os::unix::ffi::OsStrExt;
@@ -25,6 +28,12 @@ unsafe extern "C" {
     ) -> OSStatus;
     fn SecStaticCodeCreateWithPath(path: CFTypeRef, flags: u32, code: *mut CFTypeRef) -> OSStatus;
     fn SecStaticCodeCheckValidity(code: CFTypeRef, flags: u32, requirement: CFTypeRef) -> OSStatus;
+    fn SecCodeCheckValidity(code: CFTypeRef, flags: u32, requirement: CFTypeRef) -> OSStatus;
+    fn SecRequirementCreateWithString(
+        text: CFTypeRef,
+        flags: u32,
+        requirement: *mut CFTypeRef,
+    ) -> OSStatus;
     fn SecRequirementCopyData(requirement: CFTypeRef, flags: u32, data: *mut CFTypeRef)
     -> OSStatus;
     fn SecRequirementCreateWithData(
@@ -46,7 +55,16 @@ unsafe extern "C" {
     fn CFDataCreate(allocator: CFTypeRef, bytes: *const u8, length: isize) -> CFTypeRef;
     fn CFDataGetLength(data: CFTypeRef) -> isize;
     fn CFDataGetBytePtr(data: CFTypeRef) -> *const u8;
+    fn CFStringCreateWithBytes(
+        allocator: CFTypeRef,
+        bytes: *const u8,
+        length: isize,
+        encoding: u32,
+        external: u8,
+    ) -> CFTypeRef;
 }
+
+const UTF8: u32 = 0x0800_0100;
 
 /// A CoreFoundation object this code owns (+1), released on drop.
 struct Owned(CFTypeRef);
@@ -134,6 +152,40 @@ pub fn signed_like_this_program(path: &Path) -> bool {
     }
 }
 
+/// True if this program is validly signed with a Developer ID certificate of
+/// team `team`. False for ad-hoc and other signatures.
+pub fn signed_by_team(team: &str) -> bool {
+    if !team.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return false;
+    }
+    let text = format!(
+        "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] \
+         and certificate leaf[field.1.2.840.113635.100.6.1.13] \
+         and certificate leaf[subject.OU] = \"{team}\""
+    );
+    // SAFETY: each call gets valid pointers; every returned object is owned and released.
+    unsafe {
+        let string = Owned(CFStringCreateWithBytes(
+            ptr::null(),
+            text.as_ptr(),
+            text.len() as isize,
+            UTF8,
+            0,
+        ));
+        if string.0.is_null() {
+            return false;
+        }
+        let Some(requirement) = create(|out| SecRequirementCreateWithString(string.0, 0, out))
+        else {
+            return false;
+        };
+        let Some(me) = create(|out| SecCodeCopySelf(0, out)) else {
+            return false;
+        };
+        SecCodeCheckValidity(me.0, 0, requirement.0) == 0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,6 +254,12 @@ mod tests {
         let status = child.wait().unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(status.success(), "the child's check failed");
+    }
+
+    #[test]
+    fn an_unsigned_test_binary_has_no_team() {
+        assert!(!signed_by_team("LDDHTN9932"));
+        assert!(!signed_by_team("bad\" or anchor apple"));
     }
 
     #[test]

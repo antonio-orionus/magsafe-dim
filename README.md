@@ -15,8 +15,9 @@
 
 MagSafe Dim is a free, open-source macOS app that turns off the charging LED on a
 MacBook's MagSafe 3 connector and turns it off again after every plug-in and wake.
-One switch: no menu bar icon, no charge limit, nothing else to set up. Scripts and
-AI agents can set the light too: green, amber or blinking.
+One switch: no menu bar icon, no charge limit, nothing else to set up. Want the
+light by day? Turn on **Only at night** and it goes off from sunset to sunrise.
+Scripts and AI agents can set the light too: green, amber or blinking.
 
 ## Install
 
@@ -43,6 +44,31 @@ your tests pass:
 commands on your Mac, such as Claude Code or Codex. The agent suggests uses and sets
 up the ones you pick. Turning **Keep the light off** on brings the light back to off.
 
+## Updates
+
+From 1.2.0, MagSafe Dim checks for a new version when you open it, at most once a
+day and not on its very first launch, and offers to install it; **Check for
+Updates…** in the app menu checks now. It can't check while closed, since it has no menu bar icon. Updating
+from 1.1.0 or earlier: download the new version once as in [Install](#install).
+
+## Privacy
+
+Once a day the helper sends one anonymous request to the author's own
+[Counterscale](https://github.com/benvinegar/counterscale) server, which counts how
+many Macs use MagSafe Dim. It carries the app version, the macOS version (`macos-27`),
+the Mac's model identifier (`Mac17,8`) and how long ago the app was installed
+(`new`, `1-7d`, `8-30d`, `31-90d`, `over-90d`). No ID, serial number or name; the
+server keeps the country, not the IP address. Builds from source never send it.
+Turn **Send a daily heartbeat** off in the About window, or see exactly what would
+go out:
+
+```sh
+"/Applications/MagSafe Dim.app/Contents/MacOS/magsafe-dim" heartbeat show   # or: heartbeat off
+```
+
+The update check downloads `appcast.xml` from GitHub, which hosts the updates;
+the request names the app and its version.
+
 ## Uninstall
 
 Turn **Allow light control** off, then move the app to the Trash. (Trashing it while it's
@@ -52,6 +78,8 @@ Login Items.)
 ## Good to know
 
 - The light comes back while the Mac sleeps, and goes off again when it wakes.
+- **Only at night** takes sunset and sunrise from macOS's Night Shift schedule,
+  which needs Location Services. Without a location, night is 20:00 to 07:00.
 - **Updating from 1.0.0:** turn **Allow light control** off and on once after
   installing the new version. The 1.0.0 helper doesn't restart itself on updates.
 
@@ -88,6 +116,7 @@ key in your login keychain.
 MagSafe Dim.app/Contents/
   MacOS/MagSafe Dim                 the window (SwiftUI, app/)
   MacOS/magsafe-dim                 the helper (Rust, src/), runs as `magsafe-dim run`
+  Frameworks/Sparkle.framework      updates (app/Updater.swift)
   Library/LaunchDaemons/dev.orionus.magsafe-dim.daemon.plist
   Resources/AppIcon.icns
 ```
@@ -111,22 +140,26 @@ with AI** only points the agent at `magsafe-dim --help`, which documents all of 
 
 ```sh
 alias magsafe-dim="/Applications/MagSafe Dim.app/Contents/MacOS/magsafe-dim"  # scripts use the full path
-magsafe-dim set amber       # system, off, green, amber, blink, blink-once
+magsafe-dim set amber       # system, off, green, amber, blink, blink-once, night
 magsafe-dim target          # the state the helper keeps
 magsafe-dim led             # the state the light shows now
+magsafe-dim sun             # night or day now, and the night's sunset and sunrise
 ```
 
 The helper sets it again after every plug-in and wake, as it does with off;
-`system` and `blink-once` are set once and then left alone. The choice lasts
-through restarts until the next `set`. In the app, **Keep the light off** switches
-between `off` and `system`, and turning **Allow light control** off ends any choice.
+`system` and `blink-once` are set once and then left alone. `night` is off from
+sunset to sunrise and `system` by day. The choice lasts through restarts until
+the next `set`. In the app, **Keep the light off** switches between `off` and
+`system`, **Only at night** between `off` and `night`, and turning **Allow light
+control** off ends any choice.
 Blinking amber is how a Mac reports a charging problem, so don't leave it on and
 forget it.
 
-The choice is one word in `/Library/Application Support/MagSafe Dim/led`: the folder
-belongs to root, the file can be changed by the admin group, and the helper accepts
-nothing but the state names. A file needs no connection into the root helper, and
-the choice survives restarts and updates.
+The choice is one word in `/Library/Application Support/MagSafe Dim/led`, and the
+heartbeat switch one word (`on`, `off`) in `heartbeat` next to it: the folder
+belongs to root, the files can be changed by the admin group, and the helper accepts
+nothing but those words. A file needs no connection into the root helper, and
+the settings survive restarts and updates.
 
 ### What it touches
 
@@ -138,15 +171,24 @@ the choice survives restarts and updates.
   takes an enum of the states in [LED values](#led-values), so nothing else can
   reach the SMC.
 - **One folder,** `/Library/Application Support/MagSafe Dim`, for the state chosen
-  with `magsafe-dim set`. The helper removes it when the app is deleted while light
-  control is allowed; after deleting the app with it off, remove it with
-  `sudo rm -r "/Library/Application Support/MagSafe Dim"`.
+  with `magsafe-dim set`, the heartbeat switch, and two files only root writes:
+  the install's first day and last heartbeat (`heartbeat-days`), and day or night
+  as the helper keeps it while it keeps `night` (`sun`, which `magsafe-dim sun` and
+  the app show). The helper removes it when the app
+  is deleted while light control is allowed; after deleting the app with it off,
+  remove it with `sudo rm -r "/Library/Application Support/MagSafe Dim"`.
+- **Two programs it runs:** `/usr/libexec/corebrightnessdiag sunschedule` for
+  sunset and sunrise, only while it keeps the light off at night (killed after 10 s),
+  and `/usr/bin/curl` for the [heartbeat](#privacy): one HTTPS GET a day to
+  `stats.orionus.dev`, tried again 10 minutes later if it got no answer, at most six
+  times a day. Only builds signed with the author's Developer ID send it.
 - **Writes only on a mismatch.** Most events cost one read.
 - **Never delays sleep** and never keeps the Mac awake. It changes no charging
   behaviour, power setting or file.
 - **Dependencies:** `objc2-io-kit` and `objc2-core-foundation` (bindings to Apple's
-  frameworks) and `libc` for the helper; Apple's SwiftUI and ServiceManagement for
-  the window. Nothing else.
+  frameworks) and `libc` for the helper; Apple's SwiftUI and ServiceManagement and
+  [Sparkle](https://sparkle-project.org) 2.10.1 for the window, downloaded by
+  `scripts/fetch-sparkle.sh` and checked against a pinned SHA-256. Nothing else.
 
 ### How it works
 
@@ -159,7 +201,7 @@ script chose another):
 | plug-in, unplug | `IOPSCreateLimitedPowerNotification` | every 250 ms for 5 s |
 | charge state, battery level, dark wakes | `IOPSNotificationCreateRunLoopSource` | once |
 | wake from sleep | `IORegisterForSystemPower` | every 250 ms for 5 s |
-| missed event; app updated or deleted | timer | once a minute |
+| missed event; sunset or sunrise; app updated or deleted; heartbeat due | timer | once a minute |
 
 The 5-second checks are needed because after a plug-in or wake the SMC resets the
 LED in short bursts and ignores writes meanwhile. If an SMC call fails (the
@@ -198,7 +240,7 @@ Every tool found writes the same `ACLC` key, and none keeps the LED off during s
 | [markschlosser/magled](https://github.com/markschlosser/magled) | MIT | C daemon, events only; the closest to this one |
 | [bulava92/magsafe-dark](https://github.com/bulava92/magsafe-dark) | MIT | Menu bar app and root daemon; polls every 15 s |
 | [great-andy/MagSafeLed](https://github.com/great-andy/MagSafeLed) | GPL-3.0 | ObjC++ daemon; suggests preventing sleep on power for a dark LED in sleep |
-| [realAbitbol/MagSleep](https://github.com/realAbitbol/MagSleep) | MIT | Swift menu bar app and daemon; 3 s timer |
+| [realAbitbol/MagSleep](https://github.com/realAbitbol/MagSleep) | MIT | Swift menu bar app and daemon; off always, only while the Mac or its display sleeps, or sunset to sunrise; 3 s timer |
 | [gbretas/glowless](https://github.com/gbretas/glowless) | MIT | C daemon; polls every 2 s |
 | [rolandsuu/ChargeKeeper](https://github.com/rolandsuu/ChargeKeeper) | MIT | Charge limiter with LED control |
 | [shaoya828/magled](https://github.com/shaoya828/magled) | MIT | Swift app and helper; [a fork](https://github.com/zjhenrynsyh/magled) has macOS 27 fixes |
@@ -232,7 +274,14 @@ scripts/build-app.sh      # the whole app, ad-hoc signed
 ```
 
 `preview-ui.sh` draws the window offscreen, so design changes need no signing, no
-install and no running helper. To test the first-run approval, use a fresh macOS VM:
+install and no running helper. `build-app.sh` runs `scripts/fetch-sparkle.sh`,
+which downloads Sparkle into `target/sparkle` once.
+
+A release uploads three files from `target/`: `MagSafe-Dim.dmg` (the download),
+`MagSafe-Dim.zip` (what Sparkle installs) and `appcast.xml` (Sparkle's feed, read
+from the latest release). The build signs the zip and the feed with the EdDSA key
+in the login keychain (`generate_keys --account magsafe-dim`); the app accepts
+neither without it, so a lost key means users can't update. To test the first-run approval, use a fresh macOS VM:
 macOS remembers approvals, so a Mac that has allowed MagSafe Dim before won't ask again.
 
 The icon is drawn in [`assets/icon.svg`](assets/icon.svg) and the disk image window's

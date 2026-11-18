@@ -7,16 +7,17 @@ import SwiftUI
 struct MagSafeDimApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = Model()
+    @StateObject private var updater = Updater()
 
     var body: some Scene {
         Window("MagSafe Dim", id: "main") {
             ContentView(model: model)
         }
         .windowResizability(.contentSize)
-        .commands { AppMenuCommands(model: model) }
+        .commands { AppMenuCommands(model: model, updater: updater) }
 
         Window("About MagSafe Dim", id: "about") {
-            AboutView()
+            AboutView(model: model)
         }
         .windowResizability(.contentSize)
 
@@ -28,15 +29,18 @@ struct MagSafeDimApp: App {
 }
 
 /// The app menu's first items: About MagSafe Dim opens our About window instead of
-/// the standard panel, and Use with AI… opens the agent prompt (on a Mac with the light,
-/// once the helper runs).
+/// the standard panel, Check for Updates… asks Sparkle, and Use with AI… opens the
+/// agent prompt (on a Mac with the light, once the helper runs).
 struct AppMenuCommands: Commands {
     @ObservedObject var model: Model
+    @ObservedObject var updater: Updater
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
             Button("About MagSafe Dim") { openWindow(id: "about") }
+            Button("Check for Updates…") { updater.checkForUpdates() }
+                .disabled(!updater.canCheck)
             if model.supported {
                 Button("Use with AI…") { openWindow(id: "agent") }
                     .disabled(model.status != .enabled)

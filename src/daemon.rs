@@ -1,11 +1,14 @@
 //! `magsafe-dim run`: keep the LED in the chosen state until stopped: off,
-//! unless `magsafe-dim set` chose another (see target.rs).
+//! unless `magsafe-dim set` chose another (see target.rs), or off at night only
+//! (see sun.rs).
 //!
 //! macOS and the SMC rewrite ACLC on power events (plug-in, charge-state
 //! changes, sleep and wake). This waits for those events on a CoreFoundation
 //! run loop and sets the LED again. Nothing runs between events except a
-//! once-a-minute check of the LED and of whether the app was updated or deleted,
-//! and a thread that waits for the chosen state to change.
+//! once-a-minute check of the LED, of sunset and sunrise when keeping the LED off
+//! at night, of whether the app was updated or deleted, and of whether the daily
+//! heartbeat is due (heartbeat.rs); and a thread that waits for the chosen state
+//! to change.
 
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
@@ -29,9 +32,11 @@ use objc2_io_kit::{
 };
 
 use crate::codesign;
+use crate::heartbeat;
 use crate::log;
 use crate::smc::{self, Error, Led, Smc};
-use crate::target;
+use crate::sun::{self, Schedule};
+use crate::target::{self, Choice};
 
 /// After a plug-in or a wake the SMC resets the LED in short bursts and ignores
 /// writes meanwhile, so keep checking for a few seconds. A new event restarts it.
@@ -39,10 +44,19 @@ const BURST_STEP_SECS: f64 = 0.25;
 const BURST_STEPS: u32 = 20;
 const PERIODIC_SECS: f64 = 60.0;
 const PARKED: f64 = 1.0e10;
+/// How often macOS's sun schedule is read again, for a move or a new time zone.
+const SUN_REFRESH_SECS: i64 = 6 * 3600;
+/// How soon to try macOS's schedule again while using the 20:00 to 07:00 fallback.
+const SUN_RETRY_SECS: i64 = 1800;
+/// How soon to read it again while macOS's schedule still describes yesterday.
+const SUN_ROLLOVER_RETRY_SECS: i64 = 120;
 
 struct State {
     smc: Smc,
-    /// The chosen state.
+    /// What `magsafe-dim set` chose.
+    choice: Choice,
+    /// The LED state kept now: the chosen one, or for `night`, off at night and
+    /// `System` by day.
     target: Led,
     failing: bool,
 }
@@ -128,6 +142,8 @@ fn park_burst_timer(fire_at: f64) {
 }
 
 fn burst() {
+    // A wake can cross sunset or sunrise: settle day or night before checking.
+    reconsider();
     BURST_LEFT.with(|l| l.set(BURST_STEPS));
     park_burst_timer(CFAbsoluteTimeGetCurrent());
 }
@@ -144,20 +160,143 @@ unsafe extern "C-unwind" fn burst_tick(_: *mut CFRunLoopTimer, _: *mut c_void) {
     }
 }
 
-/// Makes `led` the state to keep, and sets the LED to it at once.
-fn choose(led: Led) {
+/// The last sun schedule read and when it was read.
+static SUN: Mutex<Option<(Schedule, i64)>> = Mutex::new(None);
+static SUN_FETCHING: AtomicBool = AtomicBool::new(false);
+
+/// Reads macOS's sun schedule, falling back to 20:00 to 07:00.
+fn fetch_sun() {
+    let now = sun::now();
+    let schedule = sun::schedule(now);
+    let mut cached = SUN.lock().unwrap_or_else(|e| e.into_inner());
+    let was_from_macos = cached.as_ref().map(|(s, _)| s.from_macos);
+    if was_from_macos != Some(schedule.from_macos) {
+        if schedule.from_macos {
+            log::notice("using macOS's sunset and sunrise times");
+        } else {
+            log::error("macOS has no sunset and sunrise times; using 20:00 to 07:00");
+        }
+    }
+    *cached = Some((schedule, now));
+}
+
+/// Reads the schedule again on a thread of its own when it is missing, past its
+/// day, or old, and then reconsiders the LED.
+fn refresh_sun_if_due(now: i64) {
+    let due = match SUN.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        None => true,
+        Some((s, at)) => {
+            (s.stale(now) && now - at >= SUN_ROLLOVER_RETRY_SECS)
+                || now - at >= SUN_REFRESH_SECS
+                || (!s.from_macos && now - at >= SUN_RETRY_SECS)
+        }
+    };
+    if due && !SUN_FETCHING.swap(true, Ordering::Relaxed) {
+        std::thread::spawn(|| {
+            fetch_sun();
+            SUN_FETCHING.store(false, Ordering::Relaxed);
+            reconsider();
+        });
+    }
+}
+
+/// The last schedule read, moved to cover `now`, or the fallback.
+fn sun_schedule(now: i64) -> Schedule {
+    match SUN.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        Some((s, _)) => s.around(now),
+        None => sun::fallback(now),
+    }
+}
+
+fn sun_phase(now: i64) -> sun::Phase {
+    sun_schedule(now).phase(now)
+}
+
+/// The line last written to `target::SUN_FILE`.
+static SUN_LINE: Mutex<String> = Mutex::new(String::new());
+
+/// Writes day or night as the helper keeps it now, when it changed.
+fn publish_sun(now: i64) {
+    let line = sun_schedule(now).line(now);
+    let mut last = SUN_LINE.lock().unwrap_or_else(|e| e.into_inner());
+    if *last == line {
+        return;
+    }
+    match target::write_private(target::SUN_FILE, &format!("{line}\n")) {
+        Ok(()) => *last = line,
+        Err(e) => log::error(&format!("cannot write {}: {e}", target::SUN_FILE)),
+    }
+}
+
+/// The LED state to keep now for `choice`.
+fn effective(choice: Choice, now: i64) -> Led {
+    match choice {
+        Choice::Led(led) => led,
+        Choice::Night if sun_phase(now).night => Led::Off,
+        Choice::Night => Led::System,
+    }
+}
+
+/// For `night`: switches between off and macOS at sunset and sunrise.
+fn reconsider() {
+    let now = sun::now();
+    let changed = {
+        let mut guard = state();
+        let Some(st) = guard.as_mut() else { return };
+        if st.choice != Choice::Night {
+            return;
+        }
+        let led = effective(st.choice, now);
+        let changed = st.target != led;
+        st.target = led;
+        changed
+    };
+    publish_sun(now);
+    refresh_sun_if_due(now);
+    if changed {
+        let phase = sun_phase(now);
+        log::notice(&if phase.night {
+            format!(
+                "sunset: keeping the LED off until {}",
+                sun::clock(phase.until())
+            )
+        } else {
+            format!(
+                "sunrise: LED given to macOS until {}",
+                sun::clock(phase.until())
+            )
+        });
+        enforce_with("sunset or sunrise", true);
+    }
+}
+
+/// Makes `choice` the state to keep, and sets the LED to it at once.
+fn choose(choice: Choice) {
+    let now = sun::now();
+    if choice == Choice::Night {
+        // This runs on the watch thread: read the times now, so the first choice
+        // isn't made from the fallback and then corrected.
+        if SUN.lock().unwrap_or_else(|e| e.into_inner()).is_none() {
+            fetch_sun();
+        }
+        refresh_sun_if_due(now);
+    }
     {
         let mut guard = state();
         let Some(st) = guard.as_mut() else { return };
-        if st.target == led {
+        if st.choice == choice {
             return;
         }
-        st.target = led;
+        st.choice = choice;
+        st.target = effective(choice, now);
     }
     log::notice(&format!(
         "chosen with magsafe-dim set: {}",
-        led.description()
+        choice.description()
     ));
+    if choice == Choice::Night {
+        publish_sun(now);
+    }
     enforce_with("new state", true);
 }
 
@@ -215,8 +354,8 @@ fn watch_target() {
                 ));
                 return;
             }
-            if let Ok(Some(led)) = target::read(Path::new(target::FILE)) {
-                choose(led);
+            if let Ok(Some(choice)) = target::read(Path::new(target::FILE)) {
+                choose(choice);
             }
         }
     });
@@ -298,7 +437,9 @@ fn check_own_file() {
 
 unsafe extern "C-unwind" fn periodic_tick(_: *mut CFRunLoopTimer, _: *mut c_void) {
     check_own_file();
+    reconsider();
     enforce("periodic check");
+    heartbeat::maybe_send();
 }
 
 /// Plug-in and unplug.
@@ -392,9 +533,14 @@ pub fn run() -> ! {
             std::process::exit(1);
         }
     };
+    // Was the state folder there before? Then this install predates this start.
+    let earlier_install = Path::new(target::FILE).exists();
     // Missing, unreadable or without a valid word: off.
     let follow = match target::prepare() {
-        Ok(()) => true,
+        Ok(()) => {
+            heartbeat::record_first_day(earlier_install);
+            true
+        }
         Err(e) => {
             log::error(&format!(
                 "cannot use {} ({e}); keeping the LED off",
@@ -403,19 +549,33 @@ pub fn run() -> ! {
             false
         }
     };
-    let target = if follow {
+    heartbeat::init();
+    let choice = if follow {
         target::read(Path::new(target::FILE))
             .ok()
             .flatten()
-            .unwrap_or(Led::Off)
+            .unwrap_or(Choice::Led(Led::Off))
     } else {
-        Led::Off
+        Choice::Led(Led::Off)
     };
+    if choice == Choice::Night {
+        fetch_sun();
+    }
     *state() = Some(State {
         smc,
-        target,
+        choice,
+        target: effective(choice, sun::now()),
         failing: false,
     });
+    if choice == Choice::Night {
+        publish_sun(sun::now());
+    }
+    // `System` is set once, not kept, so set it at the start too: a helper that
+    // starts by day with `night` would otherwise leave the LED off until the next event.
+    let starts_with_system = state().as_ref().is_some_and(|st| st.target == Led::System);
+    if starts_with_system {
+        enforce_with("start", true);
+    }
     if follow {
         watch_target();
     }

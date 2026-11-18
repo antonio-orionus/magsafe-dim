@@ -41,7 +41,8 @@ struct Preview {
                 print(file.path)
             }
         }
-        render(AboutView(icon: icon, version: "1.0.0"), "about")
+        render(AboutView(model: Model(preview: .enabled, light: "off"), icon: icon, version: "1.2.0"), "about")
+        render(AboutView(model: Model(preview: .notRegistered, light: "green"), icon: icon, version: "1.2.0"), "about-off")
         render(AgentView(toolPath: "/Applications/MagSafe Dim.app/Contents/MacOS/magsafe-dim"), "agent")
         for (name, status, light, error) in states {
             render(ContentView(model: Model(preview: status, light: light, error: error), icon: icon), name)
@@ -49,5 +50,12 @@ struct Preview {
         render(ContentView(model: Model(preview: .enabled, light: "green", stuck: true), icon: icon), "stuck")
         render(ContentView(model: Model(preview: .enabled, light: "green", target: "green"), icon: icon), "set")
         render(ContentView(model: Model(preview: .enabled, light: "green", target: "system"), icon: icon), "system")
+        let evening = Date(timeIntervalSince1970: 1_795_009_266), morning = Date(timeIntervalSince1970: 1_795_064_389)
+        render(ContentView(model: Model(preview: .enabled, light: "off", target: "night",
+                                        sun: Sun(night: true, sunset: evening, sunrise: morning)), icon: icon), "night")
+        render(ContentView(model: Model(preview: .enabled, light: "green", target: "night",
+                                        sun: Sun(night: false, sunset: evening, sunrise: morning)), icon: icon), "night-day")
+        render(ContentView(model: Model(preview: .enabled, light: "green", target: "night",
+                                        sun: Sun(night: false, sunset: evening, sunrise: morning, fromMacOS: false)), icon: icon), "night-fallback")
     }
 }
