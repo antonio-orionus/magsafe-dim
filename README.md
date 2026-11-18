@@ -9,7 +9,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/window-dark.png">
-    <img src="assets/screenshots/window-light.png" width="512" alt="The MagSafe Dim window with the switches 'Keep the light off' and 'Allow light control' turned on, and a 'Use with AI' button">
+    <img src="assets/screenshots/window-light.png" width="512" alt="The MagSafe Dim window with the switches 'Keep the light off', 'Only at night' (light off from 15:41 to 6:59) and 'Allow light control' turned on, and a 'Use with AI' button">
   </picture>
 </p>
 
